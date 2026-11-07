@@ -8,15 +8,16 @@ import signal
 import uvicorn
 
 from ..config import Paths, default_tunnel
+from ..hosts import detect
 from ..schemas import Preset, Settings
-from ..secretstore import init_local, load_kaggle_secrets
+from ..secretstore import init_local
 from .app import create_app
 from .state import AppState
 
 
 def build_state(*, port: int, tunnel: str | None = None, preset: Preset | None = None, mock: bool = False,
                 fake_hw: str | None = None, home: str | None = None) -> AppState:
-    secrets = load_kaggle_secrets()
+    secrets = detect().load_secrets()
     paths = Paths(home).ensure()
     init_local(paths.home)
     paths.apply_env()

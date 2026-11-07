@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .common import SSE_HEADERS, GatewayError, anthropic_error, check_access, find, wrap
+from .common import SSE_HEADERS, GatewayError, anthropic_error, check_access, find, state_of, wrap
 from .translate import anthropic_to_openai, openai_stream_to_anthropic, openai_to_anthropic
 
 router = APIRouter()
@@ -30,7 +30,7 @@ async def messages(request: Request):
     try:
         check_access(request, "anthropic")
         body = await _body(request)
-        dep = find(request, body.get("model"), "text")
+        dep = await find(request, body.get("model"), "text")
         backend = dep.backend
         assert backend
         served = dep.served_name
@@ -57,11 +57,11 @@ async def messages(request: Request):
             return JSONResponse(data, status_code=r.status_code)
 
         oai = anthropic_to_openai(body)
+        optimize = state_of(request).optimize
         if body.get("stream"):
-            return StreamingResponse(openai_stream_to_anthropic(backend.chat_stream(oai), served),
+            return StreamingResponse(openai_stream_to_anthropic(optimize.chat_stream(dep, oai), served),
                                      media_type="text/event-stream", headers=SSE_HEADERS)
-        resp = await backend.chat(oai)
-        return openai_to_anthropic(resp, served)
+        return openai_to_anthropic(await optimize.chat(dep, oai), served)
     except Exception as e:  # noqa: BLE001
         return anthropic_error(wrap(e))
 

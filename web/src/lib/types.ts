@@ -52,6 +52,72 @@ export interface Settings {
   access: { password_enabled: boolean };
   api: { enabled: boolean; openai: boolean; anthropic: boolean; ollama: boolean; require_key: boolean };
   exposure: { provider: TunnelProvider };
+  storage: StorageSettings;
+  optimize: OptimizationProfile;
+  cache: CacheProfile;
+}
+
+export interface StorageSettings {
+  active_connection: string | null;
+  restore_on_boot: boolean;
+}
+
+/** Request-shaping stages. Everything is off unless `enabled` and the individual stage say so. */
+export interface OptimizationProfile {
+  enabled: boolean;
+  max_prompt_tokens: number | null;
+  context_strategy: "head" | "tail" | "middle" | "balanced";
+  output_headroom_margin: number;
+  terse_replies: boolean;
+}
+
+export interface CacheProfile {
+  exact: boolean;
+  exact_ttl_s: number;
+  semantic: boolean;
+  semantic_threshold: number;
+  embedding_model: string | null;
+}
+
+export interface StorageConnection {
+  name: string;
+  kind: "local" | "rclone" | "hf" | "github";
+  config: Record<string, string>;
+  /** Name of the secret holding the credential, never the value itself. */
+  secret: string | null;
+  read_only: boolean;
+}
+
+export interface ArtifactFile {
+  path: string;
+  size: number;
+  sha256: string;
+}
+
+/** A versioned bundle of files with provenance (model, adapter, dataset, export, projector). */
+export interface ArtifactManifest {
+  schema_version: number;
+  artifact_id: string;
+  version: string;
+  kind: "model" | "adapter" | "dataset" | "export" | "projector";
+  parent: string | null;
+  base_revision: string | null;
+  files: ArtifactFile[];
+  companions: string[];
+  recipe: Record<string, unknown>;
+  backend: Record<string, unknown>;
+  dataset: Record<string, unknown>;
+  eval_summary: Record<string, unknown>;
+  license: string | null;
+  provenance: Record<string, unknown>;
+  created_at: number;
+}
+
+export interface ArtifactVerify {
+  ok: boolean;
+  problems: string[];
+  artifact?: ArtifactManifest;
+  error?: string;
 }
 
 export type TunnelProvider = "cloudflare" | "cloudflare_named" | "ngrok" | "none";
@@ -69,10 +135,32 @@ export interface Tunnel {
 }
 
 export interface ModelRef {
-  source: "hf" | "ollama" | "attached" | "curated";
+  source: "hf" | "ollama" | "attached" | "curated" | "artifact";
   id: string;
   variant: string | null;
   engine: string;
+}
+
+/** Where a text model's layers live. Engine-agnostic; llama.cpp compiles it to argv. */
+export interface Placement {
+  /** Physical GPU indices; null uses every GPU the deployment got. */
+  devices: number[] | null;
+  split_mode: "none" | "layer" | "row" | "tensor";
+  tensor_split: number[] | null;
+  main_gpu: number | null;
+  gpu_layers: number | "auto";
+  cpu_moe_layers: number | null;
+  cpu_moe: boolean;
+  tensor_overrides: string[];
+  flash_attn: "auto" | "on" | "off";
+  kv_cache_type_k: string | null;
+  kv_cache_type_v: string | null;
+  kv_offload: boolean;
+  mmap: boolean;
+  mlock: boolean;
+  threads: number | null;
+  batch_threads: number | null;
+  parallel: number;
 }
 
 export interface DeploymentSpec {
@@ -82,6 +170,129 @@ export interface DeploymentSpec {
   interface?: "studio" | "gradio" | "openwebui" | "comfyui" | "none";
   options?: Record<string, unknown>;
   gpus?: number[] | null;
+  /** direct = one process per deployment; llama_swap = one shared llama-swap proxy. */
+  lifecycle?: "direct" | "llama_swap";
+  /** manual starts now; pinned is never evicted; on_demand cold-starts per request. */
+  residency?: "manual" | "pinned" | "on_demand";
+  idle_timeout_s?: number;
+  placement?: Placement | null;
+}
+
+export interface ResolvedPlacement {
+  gpus: number[];
+  gpu_layers: number;
+  split_mode: string;
+  tensor_split: number[] | null;
+  main_gpu: number | null;
+  cpu_moe_layers: number | null;
+  cpu_moe: boolean;
+  flash_attn: string;
+  kv_k: string | null;
+  kv_v: string | null;
+  kv_offload: boolean;
+  mmap: boolean;
+  mlock: boolean;
+  threads: number;
+  threads_batch: number | null;
+  parallel: number;
+  tensor_overrides: string[];
+  notes: string[];
+}
+
+export interface PlacementPreview {
+  ok: boolean;
+  errors: string[];
+  resolved: ResolvedPlacement;
+}
+
+export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+
+export interface Job {
+  id: string;
+  kind: string;
+  state: JobState;
+  spec: Record<string, unknown>;
+  progress: number | null;
+  message: string;
+  error: string | null;
+  created_at: number;
+  started_at: number | null;
+  ended_at: number | null;
+  pid: number | null;
+  worker: string | null;
+  artifacts: string[];
+  checkpoint: string | null;
+  resume_supported: boolean;
+  cancel_requested: boolean;
+  logs_path: string | null;
+}
+
+export interface DeploymentSet {
+  id: string;
+  name: string;
+  deployments: DeploymentSpec[];
+  created_at: number;
+}
+
+export interface WorkbenchSnapshot {
+  active_set: string | null;
+  sets: DeploymentSet[];
+  connections: StorageConnection[];
+  deployments: { id: string; spec: DeploymentSpec; served_name: string; created_at: number; runtime: Record<string, unknown> }[];
+  storage: StorageSettings;
+  jobs: Job[];
+}
+
+export interface DatasetReport {
+  ok: boolean;
+  samples: number;
+  detected_format: string;
+  token_estimate: number;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface HarnessProfileInfo {
+  name: string;
+  version: string;
+  description: string;
+  cases: number;
+  buildable: boolean;
+}
+
+export interface EvalCaseResult {
+  id: string;
+  passed: boolean;
+  detail: string;
+  answer: string;
+  at: number;
+}
+
+export interface EvalReport {
+  profile: string;
+  version: string;
+  score: number;
+  passed: number;
+  total: number;
+  cases: EvalCaseResult[];
+  at: number;
+  artifact?: string;
+  report_path?: string;
+}
+
+export interface TrainingRun {
+  base: ModelRef;
+  dataset_artifact: string;
+  method: "lora" | "qlora";
+  output_name?: string;
+  r: number;
+  alpha: number;
+  epochs: number;
+  seq_length: number;
+  lr: number;
+  batch_size: number;
+  grad_accum: number;
+  target_modules: string[];
 }
 
 export interface Deployment {
@@ -269,13 +480,13 @@ export interface StudioModel {
 export interface SecretItem {
   name: string;
   set: boolean;
-  source: "kaggle" | "env" | "kaggleui" | null;
+  source: "kaggle" | "colab" | "attached" | "env" | "kaggleui" | null;
   editable: boolean;
 }
 
 export interface SecretDetails {
   items: SecretItem[];
-  kaggle: { state: string; error: string | null };
+  kaggle: { state: string; error: string | null; source?: string };
   hf?: { ok: boolean; user: string | null; error: string | null };
   added?: string[];
 }

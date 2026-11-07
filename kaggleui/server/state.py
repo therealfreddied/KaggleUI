@@ -9,10 +9,17 @@ from ..catalog.imports import ModelImports
 from ..catalog.service import CatalogService
 from ..config import Paths
 from ..deploy.manager import DeploymentManager
+from ..hosts import HostAdapter, detect
 from ..interfaces.manager import InterfaceManager
+from ..optimize import Optimizer
 from ..schemas import Preset, Settings
+from ..storage import StorageManager
 from ..system.probe import Probe
 from ..tunnels.manager import TunnelManager
+from ..workbench.jobs import JobStore
+from ..workbench.registry import ArtifactRegistry
+from ..workbench.residency import Residency
+from ..workbench.store import WorkbenchStore
 from .auth import Auth
 from .events import EventBus
 from .updates import Updates
@@ -41,6 +48,13 @@ class AppState:
     manager: DeploymentManager = field(init=False)
     interfaces: InterfaceManager = field(init=False)
     updates: Updates = field(init=False)
+    workbench: WorkbenchStore = field(init=False)
+    jobs: JobStore = field(init=False)
+    residency: Residency = field(init=False)
+    artifacts: ArtifactRegistry = field(init=False)
+    storage: StorageManager = field(init=False)
+    optimize: Optimizer = field(init=False)
+    host: HostAdapter = field(init=False)
 
     def __post_init__(self) -> None:
         self.auth = Auth(self.paths.home / "session.key")
@@ -49,9 +63,19 @@ class AppState:
         self.imports = ModelImports(self.paths.models / "imports", self.paths.envs)
         self.catalog = CatalogService(self.probe.snapshot, imports_root=self.imports.root)
         self.tunnels = TunnelManager(self.paths, on_change=lambda t: self.bus.publish("tunnel", t.info()))
+        self.workbench = WorkbenchStore(self.paths.home / "workbench")
+        self.workbench.load()
+        self.jobs = JobStore(self.paths.state_file.parent / "jobs.sqlite3")
+        self.jobs.recover_interrupted()
         self.manager = DeploymentManager(self)
+        self.manager.restore()
+        self.residency = Residency(self)
+        self.artifacts = ArtifactRegistry(self.paths.models / "artifacts")
+        self.storage = StorageManager(self.paths, self.workbench)
+        self.optimize = Optimizer(self)
         self.interfaces = InterfaceManager(self)
         self.updates = Updates(self)
+        self.host = detect()
 
     def main_url(self) -> str:
         t = self.tunnels.get("main")

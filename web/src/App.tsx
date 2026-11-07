@@ -12,6 +12,7 @@ import { api } from "./lib/api";
 import { LiveProvider, useLive } from "./lib/live";
 import { useTheme } from "./lib/theme";
 const Launch = lazy(() => import("./pages/Launch"));
+const StoragePage = lazy(() => import("./pages/Storage"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Imports = lazy(() => import("./pages/Imports"));
 import { AccessLogin, AdminLogin } from "./pages/Login";
@@ -21,6 +22,8 @@ const Deployments = lazy(() => import("./pages/Deployments"));
 const Studio = lazy(() => import("./pages/Studio"));
 const Access = lazy(() => import("./pages/Access"));
 const System = lazy(() => import("./pages/System"));
+const Create = lazy(() => import("./pages/Create"));
+const Jobs = lazy(() => import("./pages/Jobs"));
 
 function Loading() {
   return (
@@ -56,10 +59,13 @@ function AdminApp() {
           <Route path="/host" element={<Navigate to="/" replace />} />
           <Route path="/models" element={<Models />} />
           <Route path="/deployments" element={<Deployments />} />
+          <Route path="/storage" element={<StoragePage />} />
           <Route path="/studio" element={<Studio admin />} />
           <Route path="/studio/:id" element={<Studio admin />} />
           <Route path="/access" element={<Access />} />
           <Route path="/system" element={<System />} />
+          <Route path="/create" element={<Create />} />
+          <Route path="/jobs" element={<Jobs />} />
           <Route path="/login" element={<Navigate to="/studio" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

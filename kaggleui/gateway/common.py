@@ -55,13 +55,20 @@ def check_access(request: Request, surface: str) -> None:
                            "authentication_error", "invalid_api_key")
 
 
-def find(request: Request, model: str | None, modality: str) -> Deployment:
+async def find(request: Request, model: str | None, modality: str) -> Deployment:
+    """Resolve a request's model, cold-starting an on-demand deployment when needed."""
     st = state_of(request)
     dep = st.manager.resolve(model, modality)
     if dep is None:
         running = [d.served_name for d in st.manager.ready(modality)]
         hint = f" Running: {', '.join(running)}." if running else f" No {MODALITY_LABEL[modality]} is running yet."
         raise GatewayError(404, f"Model '{model}' not found.{hint}", "not_found_error", "model_not_found")
+    if dep.status == "cold" or dep.backend is None:
+        try:
+            await st.manager.ensure_ready(dep)
+        except Exception as exc:  # noqa: BLE001 - surfaced as a clean API error
+            raise GatewayError(503, f"{dep.served_name} could not start: {exc}", "api_error") from exc
+    st.residency.touch(dep)
     return dep
 
 

@@ -30,6 +30,7 @@ from .auth import ACCESS_COOKIE, ADMIN_COOKIE
 from .proxy import proxy_http, proxy_ws
 from .state import AppState
 from .studio import studio_ws
+from .workbench_api import router as workbench_router
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 RESERVED = ("/v1/", "/api/", "/_kui/", "/gradio/")
@@ -40,6 +41,7 @@ def create_app(state: AppState) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         state.bus.bind_loop(asyncio.get_running_loop())
+        state.residency.start()
         tasks = [asyncio.create_task(_metrics_loop(state)), asyncio.create_task(_startup(state)),
                  asyncio.create_task(state.updates.run())]
         try:
@@ -48,8 +50,12 @@ def create_app(state: AppState) -> FastAPI:
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            await state.residency.stop()
             await state.imports.close()
             await state.manager.shutdown()
+            from ..engines import llamaswap
+
+            await llamaswap.shutdown()
             from ..engines.ollama import OllamaServer
 
             await OllamaServer.get().stop()  # only stops an Ollama we started ourselves
@@ -61,10 +67,23 @@ def create_app(state: AppState) -> FastAPI:
                 _write_state(state, "stopped")
             except Exception:
                 pass
+            state.jobs.close()
 
     app = FastAPI(title="KaggleUI", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)
     app.state.kui = state
+
+    @app.middleware("http")
+    async def gateway_traffic(request: Request, call_next):
+        # Idle eviction must not race an inference request; the counter is best-effort for streams.
+        gateway = request.url.path.startswith(("/v1/", "/api/", "/gradio/"))
+        if gateway:
+            state.residency.busy += 1
+        try:
+            return await call_next(request)
+        finally:
+            if gateway:
+                state.residency.busy -= 1
 
     @app.middleware("http")
     async def headers(request: Request, call_next):
@@ -81,6 +100,7 @@ def create_app(state: AppState) -> FastAPI:
     app.include_router(openai_gw.router)
     app.include_router(anthropic_gw.router)
     app.include_router(ollama_gw.router)
+    app.include_router(workbench_router)
 
     # =========================================================================================
     # Session / auth
@@ -190,7 +210,7 @@ def create_app(state: AppState) -> FastAPI:
         require_admin(request)
         before = state.settings.exposure.provider
         data = state.settings.model_dump()
-        for section in ("access", "api", "exposure"):
+        for section in ("access", "api", "exposure", "storage", "optimize", "cache", "ml"):
             changes = getattr(patch, section)
             if changes:
                 data[section].update(changes)
@@ -272,7 +292,7 @@ def create_app(state: AppState) -> FastAPI:
     async def reload_secrets(request: Request):
         require_admin(request)
         before = secret_status()
-        await asyncio.to_thread(secretstore.load_kaggle_secrets, True)
+        await asyncio.to_thread(secretstore.load_attached_secrets, True)
         after = secret_status()
         secrets_changed()
         data = secrets_payload(await hf_identity())

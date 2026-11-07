@@ -1,5 +1,8 @@
 # KaggleUI
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/UltraFEmotes/KaggleUI/blob/main/notebooks/colab.ipynb)
+[![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/kernels/welcome?src=https://raw.githubusercontent.com/UltraFEmotes/KaggleUI/main/notebooks/KaggleUI.ipynb)
+
 One notebook cell turns a free Kaggle GPU into a model host. Run it, open the link on your own computer, and pick what to serve from a web control panel:
 
 - **Model categories:** Text (LLMs), Image, Video, Text-to-speech, Audio generation, Speech-to-text, World models and 3D models. Runner availability is shown separately from catalog discovery.
@@ -203,11 +206,89 @@ This is an example shape; each deployed model returns its actual voice list. Wit
 
 Submit `POST /v1/worlds` with `model`, `prompt`, and optional `input_reference_b64` / runner settings. Poll `GET /v1/worlds/{id}`, list exports with `GET /v1/worlds/{id}/assets`, stream a file from `/v1/worlds/{id}/assets/{path}`, or download the scene ZIP from `/v1/worlds/{id}/content`. These endpoints use the same API authentication as chat. WorldPlay and other video runners continue to use `/v1/videos`.
 
+## Native llama.cpp engine
+
+Two lifecycles share the same pinned `llama.cpp` release (b12189) and the same GGUF files:
+
+| Lifecycle | Process model | Best for |
+|---|---|---|
+| `direct` | One `llama-server` per deployment, supervised like every other engine | Maximum isolation; a crash or OOM affects one model |
+| `llama_swap` | One `llama-swap` process fronts several models and starts them on demand | Several GGUF models on one GPU with fast switching |
+
+Residency decides when a deployment occupies VRAM:
+
+| Residency | Behaviour |
+|---|---|
+| `manual` | Starts immediately and stays until you stop it |
+| `pinned` | Starts immediately; never evicted to make room |
+| `on_demand` | Cold-starts on the first request, unloads after `idle_timeout_s` (minimum 30 s) of no traffic |
+
+Admission is explicit: when a model does not fit, KaggleUI first unloads idle, evictable deployments (never `pinned` ones). If free VRAM is still short it refuses with `Not enough free VRAM for <name> (needs ≈X GB). Stop a deployment and try again.` instead of starting a process that would OOM.
+
+### Placement
+
+`DeploymentSpec.placement` is engine-agnostic; the llama.cpp engine compiles it to `llama-server` flags:
+
+| Field | Flag | Effect |
+|---|---|---|
+| `devices` | `CUDA_VISIBLE_DEVICES` | Physical GPU indices the deployment may use |
+| `gpu_layers` | `--n-gpu-layers` | Layers offloaded to the GPU (`auto` = all when GPUs are present) |
+| `split_mode` | `--split-mode` | `layer`, `row` or `tensor` split across GPUs |
+| `tensor_split` | `--tensor-split` | Per-GPU proportion of the model |
+| `main_gpu` | `--main-gpu` | GPU that owns the output/attention buffers |
+| `cpu_moe`, `cpu_moe_layers` | `--cpu-moe`, `--n-cpu-moe` | Keep expert tensors on the CPU |
+| `tensor_overrides` | `--override-tensor` | Repeated per-tensor quant/placement overrides |
+| `flash_attn` | `--flash-attn` | `on`, `off`, or `auto` |
+| `kv_cache_type_k` / `kv_cache_type_v` | `--cache-type-k` / `--cache-type-v` | KV-cache quantization |
+| `kv_offload` | `--no-kv-offload` | Keep the KV cache out of VRAM |
+| `mmap`, `mlock` | `--no-mmap`, `--mlock` | Memory-mapping policy |
+| `threads`, `batch_threads`, `parallel` | `--threads`, `--threads-batch`, `--parallel` | CPU threads and concurrent slots |
+
+## Storage connections
+
+Durable artifacts (datasets, LoRA adapters, merged models, GGUF exports, eval reports) live in the artifact registry on the ephemeral disk. A storage connection copies them somewhere that survives the session:
+
+| Connection | Write path | Notes |
+|---|---|---|
+| Local | Any directory | Disk space only; point it at a mounted Drive |
+| rclone | `rclone copyto` per file, never `sync` | Remote names are validated; deletion uses `deletefile` and needs `confirm` |
+| Hugging Face | Model or dataset repo upload | Needs a write token and a licence; a model with `license is None` requires `confirm` |
+| GitHub | Contents API | Text/catalog files only, 1 MiB per file maximum |
+
+Read-only connections are refused for uploads. Restore-on-boot is opt-in per connection.
+
+## Model Studio workflow
+
+1. **Dataset** — upload JSONL/JSON/CSV in `/_kui/api/workbench/ml/datasets`, then validate it: every row must be a `messages` list or a list of turns.
+2. **Train** — pick a base model (safetensors, not GGUF), a dataset artifact and LoRA or QLoRA. Runs are persisted jobs with live logs, progress and cancel; a run with checkpoints can be resumed from the newest one.
+3. **Evaluate** — run a harness profile against a ready deployment. Reports record each case and are saved as `export` artifacts.
+4. **Convert** — `POST …/ml/convert` with `{artifact_id, quant, out_name}`. An adapter is merged into the base recorded in its provenance, then exported as `Q4_K_M`, `Q5_K_M`, `Q8_0` or `F16`; lower-level `…/ml/merge` and `…/ml/quantize` remain available. The GGUF is metadata-checked before registration.
+5. **Deploy** — deploy the GGUF artifact with `source: "artifact"`; the engine resolves the first shard (skipping `mmproj` projectors).
+
+Editing an existing model (abliteration) is exposed as `…/ml/edit` and reuses the import pipeline, so the resulting model directory is registered as a `model` artifact.
+
+## Colab
+
+Open [notebooks/colab.ipynb](notebooks/colab.ipynb) and run its single install cell; host detection is automatic. Colab differences:
+
+- No `/kaggle/working` output and no `/kaggle/input` Datasets mount.
+- No Kaggle Secrets panel; use Colab Secrets (key icon) — `HF_TOKEN` and `NGROK_AUTHTOKEN` are read from `google.colab.userdata`.
+- `/tmp/kaggleui` is lost on disconnect; attach a storage connection or mount Drive before long conversions.
+- Runtimes are interactive and end when they disconnect. KaggleUI never keeps a session alive.
+
+## What this never does
+
+- Never `pkill`s processes it did not start; ownership is tracked per deployment.
+- Never keeps a notebook session alive or evades idle timeouts.
+- Never calls paid teacher APIs: teacher datasets are generated by the deployments you run.
+- Never stores binaries in GitHub; the Contents API path is capped at 1 MiB text files.
+- Never runs `rclone sync`: every upload/deletion is explicit per file.
+
 ## What runs where
 
 | Type | Engines |
 |---|---|
-| Text | Ollama (GGUF from Ollama or any HF GGUF repo; splits big models across both T4s), vLLM (experimental on T4), SGLang (alternative fast runner, experimental, T4+), Transformers. Pick the engine when launching the model |
+| Text | llama.cpp direct or llama-swap (the native GGUF engine above), Ollama (GGUF from Ollama or any HF GGUF repo; splits big models across both T4s), vLLM (experimental on T4), SGLang (alternative fast runner, experimental, T4+), Transformers. Pick the engine when launching the model |
 | Text on a TPU session | vLLM with the TPU backend (experimental; one model sharded across all chips) |
 | Image | Diffusers (SD 1.5/2/XL/3.5, FLUX with 4-bit + offload…), or ComfyUI |
 | Video | Diffusers (Wan 2.1/2.2, CogVideoX, LTX-Video…), slow on T4 |

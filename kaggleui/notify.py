@@ -36,7 +36,8 @@ async def push(url: str, admin_token: str) -> str | None:
         return f"failed: {type(e).__name__}"
 
 
-def card_html(url: str, admin_token: str, password: str | None, api_key: str | None, note: str = "") -> str:
+def card_html(url: str, admin_token: str, password: str | None, api_key: str | None, note: str = "",
+              guidance: list[str] | None = None) -> str:
     link = panel_link(url, admin_token)
     rows = [("Control panel", f'<a href="{html.escape(link)}" target="_blank" style="color:#1f6feb;font-weight:600">'
              f'{html.escape(url)}</a>')]
@@ -47,13 +48,16 @@ def card_html(url: str, admin_token: str, password: str | None, api_key: str | N
         rows.append(("API key", f"<code>{html.escape(api_key)}</code>"))
     body = "".join(f'<tr><td style="padding:4px 14px 4px 0;color:#667;white-space:nowrap">{k}</td><td>{v}</td></tr>'
                    for k, v in rows)
-    extra = f'<div style="margin-top:8px;color:#667;font-size:12px">{html.escape(note)}</div>' if note else ""
+    hints = "".join(f'<div style="margin-top:2px;color:#667;font-size:12px">{html.escape(line)}</div>'
+                    for line in guidance or [])
+    extra = (f'<div style="margin-top:8px;color:#667;font-size:12px">{html.escape(note)}</div>' if note else "") + hints
     return ('<div style="font-family:system-ui,sans-serif;border:1px solid #d0d7de;border-radius:10px;padding:14px 16px;'
             'max-width:760px;font-size:14px"><div style="font-weight:700;margin-bottom:8px">KaggleUI is running</div>'
             f'<table style="border-collapse:collapse">{body}</table>{extra}</div>')
 
 
-def card_text(url: str, admin_token: str, password: str | None, api_key: str | None) -> str:
+def card_text(url: str, admin_token: str, password: str | None, api_key: str | None,
+              guidance: list[str] | None = None) -> str:
     lines = ["", "=" * 64, " KaggleUI is running", "=" * 64,
              f" Open:            {panel_link(url, admin_token)}",
              f" Admin token:     {admin_token}"]
@@ -61,5 +65,6 @@ def card_text(url: str, admin_token: str, password: str | None, api_key: str | N
         lines.append(f" Access password: {password}")
     if api_key:
         lines.append(f" API key:         {api_key}")
+    lines += [f" {line}" for line in guidance or []]
     lines += ["=" * 64, ""]
     return "\n".join(lines)

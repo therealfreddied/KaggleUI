@@ -93,6 +93,7 @@ export const SOURCE_LABEL: Record<string, string> = {
 /** Display names for the engines the UI lets you pick between. */
 export const ENGINE_LABEL: Record<string, string> = {
   ollama: "Ollama (llama.cpp)",
+  llamacpp: "llama.cpp",
   vllm: "vLLM",
   sglang: "SGLang",
   transformers: "Transformers",

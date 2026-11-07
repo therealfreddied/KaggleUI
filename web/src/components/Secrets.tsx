@@ -21,7 +21,7 @@ const INFO: Record<string, { label: string; help: string; link?: string; placeho
   KAGGLEUI_NOTIFY_URL: { label: "Notification URL", help: "An ntfy.sh topic URL or Discord webhook. Gets the link when KaggleUI starts.", placeholder: "https://ntfy.sh/your-topic" },
 };
 
-const SOURCE_LABEL: Record<string, string> = { kaggle: "From Kaggle secret", kaggleui: "Set in KaggleUI", env: "From environment" };
+const SOURCE_LABEL: Record<string, string> = { kaggle: "From Kaggle secret", colab: "From Colab secret", attached: "From host secret", kaggleui: "Set in KaggleUI", env: "From environment" };
 
 function Row({ item, hf, onSaved }: { item: SecretItem; hf?: SecretDetails["hf"]; onSaved: (d: SecretDetails) => void }) {
   const info = INFO[item.name] ?? { label: item.name, help: "" };

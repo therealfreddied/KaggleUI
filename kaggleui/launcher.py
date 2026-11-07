@@ -14,7 +14,7 @@ import psutil
 from . import __version__
 from .config import DEFAULT_PORT, Paths, default_tunnel, load_preset
 from .notify import card_html, card_text
-from .secretstore import kaggle_sourced, load_kaggle_secrets
+from .secretstore import attached_sourced, load_attached_secrets
 from .tunnels.persistent import read_record, request_handoff, saved_processes, stop_saved_tunnel
 
 STOP_TIMEOUT = 20
@@ -72,8 +72,12 @@ def _show(state: dict) -> None:
     note = ""
     if state.get("tunnel", {}) and state["tunnel"].get("provider") == "cloudflare":
         note = "App updates keep this link. A fresh notebook session, full stop or tunnel reconnect creates a new one."
-    _display(card_html(state["url"], state["admin_token"], state.get("password"), state.get("api_key"), note),
-             card_text(state["url"], state["admin_token"], state.get("password"), state.get("api_key")))
+    from .hosts import detect
+
+    guidance = detect().startup_guidance()
+    _display(card_html(state["url"], state["admin_token"], state.get("password"), state.get("api_key"), note,
+                       guidance),
+             card_text(state["url"], state["admin_token"], state.get("password"), state.get("api_key"), guidance))
 
 
 def stop(home: str | None = None, *, _preserve_pid: int | None = None, _keep_tunnel: bool = False) -> bool:
@@ -195,7 +199,7 @@ def restart_tunnel(home: str | None = None) -> dict:
 
 def launch(preset=None, *, block: bool = True, tunnel: str | None = None, port: int | None = None,
            mock: bool = False, fake_hw: str | None = None, home: str | None = None):
-    load_kaggle_secrets()  # Kaggle secrets are readable from the kernel process; pass them down via env.
+    load_attached_secrets()  # Host secrets are readable from the kernel process; pass them down via env.
     paths = Paths(home).ensure()
     existing = _read_state(paths)
     retained = existing if existing and saved_processes(paths) else {}
@@ -239,7 +243,7 @@ def launch(preset=None, *, block: bool = True, tunnel: str | None = None, port: 
         cmd += ["--home", home]
     if paths.state_file.exists():
         paths.state_file.unlink()
-    env = {**os.environ, "PYTHONUNBUFFERED": "1", "KAGGLEUI_KAGGLE_SECRETS": ",".join(kaggle_sourced())}
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "KAGGLEUI_ATTACHED_SECRETS": ",".join(attached_sourced())}
     for key, field in (("KAGGLEUI_ADMIN_TOKEN", "admin_token"), ("KAGGLEUI_PASSWORD", "password"),
                        ("KAGGLEUI_API_KEY", "api_key")):
         if retained.get(field):
@@ -273,7 +277,7 @@ def launch(preset=None, *, block: bool = True, tunnel: str | None = None, port: 
 
 def _share_secrets(state: dict) -> None:
     """Re-running the cell after adding a Kaggle secret: hand the new values to the running server."""
-    names = kaggle_sourced()
+    names = attached_sourced()
     if not names:
         return
     try:

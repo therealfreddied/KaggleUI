@@ -208,6 +208,11 @@ async def _run(args) -> int:
                                 headers={"Authorization": f"Bearer {state.auth.api_key}"})
         state.settings.api.ollama = True
         specs = [s for s in state.catalog.selftest_specs() if s["modality"] in wanted]
+        if "text" in wanted:
+            # The native llama.cpp engine is a separate runner from Ollama; exercise it with a 0.6B GGUF.
+            specs.append({"modality": "text", "options": {"ctx": 2048},
+                          "model": {"source": "hf", "id": "unsloth/Qwen3-0.6B-GGUF", "variant": "Q4_K_M",
+                                    "engine": "llamacpp"}})
         for spec in specs:
             spec["options"] = {**spec.get("options", {}), **SMALL.get(spec["modality"], {})}
             entry = {"modality": spec["modality"], "model": spec["model"]["id"], "engine": spec["model"]["engine"]}
@@ -257,3 +262,4 @@ async def _run(args) -> int:
 
 def run(args) -> int:
     return asyncio.run(_run(args))
+

@@ -13,8 +13,10 @@ import importlib.util
 import os
 import shutil
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
+from ..config import Paths
 from ..proc import run_cmd
 from .context import DeployError, EngineContext
 
@@ -122,30 +124,52 @@ async def ensure_uv(ctx: EngineContext) -> str:
         return uv
 
 
-async def ensure_venv(ctx: EngineContext, name: str, requirements: list[str], *, python: str = "3.11",
-                      system_site_packages: bool = False, label: str | None = None) -> str:
-    """Create (once) an isolated venv with ``requirements``; returns its python executable."""
-    venv = ctx.paths.envs / name
+async def ensure_venv_at(paths: Paths, name: str, requirements: list[str], *,
+                         progress: Callable[[str, float | None, str], None],
+                         log: Callable[[str], None], python: str | None = None,
+                         system_site_packages: bool = True, label: str | None = None) -> str:
+    """Create (once) an isolated venv with ``requirements``; returns its python executable.
+
+    ``python`` defaults to the interpreter running this process, so a notebook's 3.11 or Colab's 3.12
+    matches what ``--system-site-packages`` exposes (CUDA torch included).
+    """
+    python = python or f"{sys.version_info.major}.{sys.version_info.minor}"
+    venv = paths.envs / name
     py = venv / "bin" / "python"
     marker = venv / ".kaggleui-ready"
     async with _lock(f"venv:{name}"):
         if marker.exists() and marker.read_text() == "\n".join(requirements):
             return str(py)
-        uv = await ensure_uv(ctx)
-        ctx.progress("installing", None, f"Creating isolated environment for {label or name}")
+        uv = shutil.which("uv") or (str(paths.bin / "uv") if (paths.bin / "uv").exists() else None)
+        if not uv:
+            progress("installing", None, "Installing uv (fast Python package manager)")
+            rc = await run_cmd([sys.executable, "-m", "pip", "install", "-q", "uv"], on_line=log)
+            if rc != 0:
+                raise DeployError("Couldn't install uv")
+            uv = shutil.which("uv") or (str(Path(sys.executable).parent / "uv")
+                                        if (Path(sys.executable).parent / "uv").exists() else None)
+            if not uv:
+                raise DeployError("uv installed but not found on PATH")
+        progress("installing", None, f"Creating isolated environment for {label or name}")
         if not py.exists():
             cmd = [uv, "venv", str(venv), "--python", python, "--seed"]
             if system_site_packages:
                 cmd.append("--system-site-packages")
-            rc = await run_cmd(cmd, on_line=ctx.log)
+            rc = await run_cmd(cmd, on_line=log)
             if rc != 0:
                 raise DeployError(f"Couldn't create the {name} environment")
-        ctx.progress("installing", None, f"Installing {label or name} (first time only, can take a few minutes)")
-        rc = await run_cmd([uv, "pip", "install", "--python", str(py), *requirements], on_line=ctx.log)
+        progress("installing", None, f"Installing {label or name} (first time only, can take a few minutes)")
+        rc = await run_cmd([uv, "pip", "install", "--python", str(py), *requirements], on_line=log)
         if rc != 0:
             raise DeployError(f"Installing {label or name} failed (exit {rc}). See the logs.")
         marker.write_text("\n".join(requirements))
         return str(py)
+
+async def ensure_venv(ctx: EngineContext, name: str, requirements: list[str], *, python: str = "3.11",
+                      system_site_packages: bool = False, label: str | None = None) -> str:
+    """Engine-facing wrapper: same behaviour, context supplies paths and progress reporting."""
+    return await ensure_venv_at(ctx.paths, name, requirements, progress=ctx.progress, log=ctx.log,
+                                python=python, system_site_packages=system_site_packages, label=label)
 
 
 async def apt_install(ctx: EngineContext, packages: list[str]) -> None:

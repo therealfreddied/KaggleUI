@@ -32,13 +32,15 @@ DTYPE_BYTES: dict[str, float] = {
 FLOAT_DTYPES = {"F64", "F32", "BF16", "F16", "FP16"}
 
 # Engines that can spread one model over several GPUs.
-SPLIT_ENGINES = {"ollama", "vllm", "sglang", "transformers"}
+SPLIT_ENGINES = {"ollama", "llamacpp", "vllm", "sglang", "transformers"}
 # Engines that can keep part of the model in system RAM (slower).
-OFFLOAD_ENGINES = {"diffusers", "diffusers_video", "diffusers_world", "transformers", "transformers_tts"}
+OFFLOAD_ENGINES = {"diffusers", "diffusers_video", "diffusers_world", "transformers", "transformers_tts",
+                   "llamacpp"}
 # Minimum CUDA compute capability (sm) per engine.
 ENGINE_MIN_SM = {"vllm": 70, "sglang": 75, "diffusers_world": 80}
 # Engines that are fine on CPU for small models.
-CPU_FRIENDLY = {"ollama", "faster_whisper", "kokoro", "transformers_asr", "transformers_tts", "mock"}
+CPU_FRIENDLY = {"ollama", "llamacpp", "faster_whisper", "kokoro", "transformers_asr", "transformers_tts",
+                "mock"}
 # Engines with a TPU path. vLLM's TPU backend shards one model across every chip in the slice.
 TPU_ENGINES = {"vllm"}
 
@@ -260,7 +262,7 @@ def assess(c: Candidate, hw: HardwareProfile) -> Fit:
             return done("tight", "offload", [f"≈{human_bytes(need)} at fp16: too big for {_gpu_label(hw)}",
                                              "Runs with 4-bit (nf4) weights + CPU offload; slower, slight quality loss"]
                         + busy_note, single, {"offload": "model", "quantize": "nf4"})
-    if c.engine == "ollama":
+    if c.engine in ("ollama", "llamacpp"):
         cap = total if len(hw.gpus) > 1 else single
         overflow = need - cap
         if cap >= need * 0.8 and overflow <= hw.ram_available * 0.6:

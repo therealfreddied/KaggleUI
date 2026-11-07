@@ -28,6 +28,10 @@ async def deploy(spec: DeploymentSpec, ctx: EngineContext, *, mock: bool) -> tup
         from . import sglang
 
         return await sglang.deploy(spec, ctx)
+    if engine == "llamacpp":
+        from . import llamacpp
+
+        return await llamacpp.deploy(spec, ctx)
     if engine == "world_recipe":
         from . import world_engine
 
@@ -39,8 +43,13 @@ async def deploy(spec: DeploymentSpec, ctx: EngineContext, *, mock: bool) -> tup
     raise DeployError(f"Unknown engine '{engine}'")
 
 
-async def undeploy(spec: DeploymentSpec, dep_id: str, *, mock: bool) -> None:
+async def undeploy(spec: DeploymentSpec, dep_id: str, *, mock: bool, state=None) -> None:
     if not mock and spec.model.engine == "ollama":
         from . import ollama
 
         await ollama.undeploy(dep_id)
+    if not mock and spec.model.engine == "llamacpp" and state is not None:
+        from . import llamaswap
+
+        if spec.lifecycle == "llama_swap":
+            await llamaswap.remove(state, dep_id)

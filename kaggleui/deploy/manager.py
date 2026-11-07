@@ -35,6 +35,9 @@ class Deployment:
     error: str | None = None
     gpus: list[int] = field(default_factory=list)
     vram_estimate: int = 0
+    vram_plan: int = 0
+    last_used: float = 0.0
+    _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     created_at: float = field(default_factory=time.time)
     ready_at: float | None = None
     info: dict[str, Any] = field(default_factory=dict)
@@ -100,6 +103,10 @@ class DeploymentManager:
             for d in candidates:
                 if model in (d.served_name, d.id, d.spec.model.id):
                     return d
+            for d in self.deployments.values():
+                if d.status == "cold" and (modality is None or d.spec.modality == modality) and \
+                        model in (d.served_name, d.id, d.spec.model.id):
+                    return d
         if len(candidates) == 1:
             return candidates[0]
         if candidates and not model:
@@ -118,16 +125,56 @@ class DeploymentManager:
             i += 1
         dep = Deployment(id=short_id(6), spec=spec, served_name=name)
         dep.vram_estimate = int(spec.options.get("vram_estimate") or 0)
-        dep.gpus = self._choose_gpus(spec, dep.vram_estimate)
-        free = sum(g.vram_free for g in self.state.probe.snapshot().gpus if g.index in dep.gpus)
-        if dep.vram_estimate and dep.gpus and dep.vram_estimate > free:
-            dep.logs.append(f"WARNING: needs ≈{dep.vram_estimate / 1e9:.1f} GB VRAM but only {free / 1e9:.1f} GB is free "
-                            "on its GPUs. Stop another deployment if loading fails or runs slowly.")
-        self._reserve(dep)
+        dep.vram_plan = dep.vram_estimate
         self.deployments[dep.id] = dep
+        self.state.workbench.put_deployment(dep.id, spec, dep.served_name, created_at=dep.created_at)
+        if spec.residency == "on_demand":
+            dep.status = "cold"
+            dep.message = "Loads on first request"
+            self._emit(dep, force=True)
+            return dep
+        self._start(dep)
+        return dep
+
+    def _start(self, dep: Deployment) -> None:
+        dep.gpus = self._choose_gpus(dep.spec, dep.vram_plan)
+        free = sum(g.vram_free for g in self.state.probe.snapshot().gpus if g.index in dep.gpus)
+        if dep.vram_plan and dep.gpus and dep.vram_plan > free:
+            dep.logs.append(f"WARNING: needs ≈{dep.vram_plan / 1e9:.1f} GB VRAM but only {free / 1e9:.1f} GB is free "
+                            "on its GPUs. Stop another deployment if loading fails or runs slowly.")
+        dep.vram_estimate = dep.vram_plan
+        self._reserve(dep)
+        dep.status = "queued"
+        dep.error = None
+        dep.progress = None
+        dep.message = "Queued"
         dep.task = asyncio.create_task(self._run(dep))
         self._emit(dep, force=True)
-        return dep
+
+    async def ensure_ready(self, dep: Deployment, timeout: float = 900.0) -> None:
+        """Start an on-demand deployment if needed and wait until it can serve (single flight)."""
+        if dep.status == "ready" and dep.backend is not None:
+            return
+        async with dep._start_lock:
+            if dep.status == "ready" and dep.backend is not None:
+                return
+            if dep.status not in ("cold", "stopped", "error"):
+                raise DeployError(f"{dep.served_name} is {dep.status}: {dep.message}")
+            if self.state.updates.blocked:
+                raise DeployError(self.state.updates.status()["message"])
+            await self.state.residency.make_room(dep)
+            self._start(dep)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if dep.status == "ready" and dep.backend is not None:
+                return
+            if dep.status in ("error", "stopped"):
+                raise DeployError(f"{dep.served_name} failed to start: {dep.message}")
+            await asyncio.sleep(0.25)
+        raise DeployError(f"{dep.served_name} did not become ready in {int(timeout)}s")
+
+    def touch(self, dep: Deployment) -> None:
+        dep.last_used = time.time()
 
     def _choose_gpus(self, spec: DeploymentSpec, need: int) -> list[int]:
         hw = self.state.probe.snapshot()
@@ -136,7 +183,12 @@ class DeploymentManager:
         if not hw.gpus:
             return []
         engine = spec.model.engine
-        if engine == "ollama" or spec.interface == "comfyui":
+        if spec.lifecycle == "llama_swap":
+            # The shared proxy owns per-model GPU pinning, so it must see every card.
+            return [g.index for g in hw.gpus]
+        if spec.placement is not None and spec.placement.devices:
+            return [g for g in spec.placement.devices if any(x.index == g for x in hw.gpus)]
+        if engine in ("ollama", "llamacpp") or spec.interface == "comfyui":
             return [g.index for g in hw.gpus]
         pending: dict[int, int] = {}
         if not hw.fake:  # fake probes already count reservations as used VRAM
@@ -191,7 +243,8 @@ class DeploymentManager:
 
         ctx = EngineContext(paths=st.paths, dep_id=dep.id, served_name=dep.served_name, gpus=dep.gpus,
                             hw=st.probe.snapshot(), log=lambda line: self._log(dep, line), progress=progress,
-                            internal_key=st.auth.internal_key, main_port=st.port, processes=dep.processes)
+                            internal_key=st.auth.internal_key, main_port=st.port, processes=dep.processes,
+                            jobs=st.jobs, workbench=st.workbench)
         try:
             hw = st.probe.snapshot()
             where = f"TPU ({len(hw.tpus)} chips)" if hw.accelerator == "tpu" and hw.tpus else f"GPUs {dep.gpus or 'none'}"
@@ -242,6 +295,8 @@ class DeploymentManager:
         dep.status = "stopping"
         dep.message = "Stopping"
         self._emit(dep, force=True)
+        if remove:
+            self.state.workbench.drop_deployment(dep_id)
         if dep.task and not dep.task.done():
             dep.task.cancel()
             try:
@@ -261,16 +316,38 @@ class DeploymentManager:
         for proc in dep.processes:
             await proc.stop()
         try:
-            await registry.undeploy(dep.spec, dep.id, mock=self.state.mock)
+            await registry.undeploy(dep.spec, dep.id, mock=self.state.mock, state=self.state)
         except Exception as exc:
             self._log(dep, f"Model cleanup: {exc}")
         self._release(dep)
-        dep.status = "stopped"
-        dep.message = "Stopped"
+        if not remove and dep.spec.residency == "on_demand":
+            dep.status = "cold"
+            dep.message = "Loads on first request"
+        else:
+            dep.status = "stopped"
+            dep.message = "Stopped"
         self._emit(dep, force=True)
         if remove:
             self.deployments.pop(dep_id, None)
             self.state.bus.publish("deployment_removed", {"id": dep_id})
+
+    def restore(self) -> None:
+        """Re-register durable deployments as cold/stopped so their names resolve after a restart."""
+        for record in self.state.workbench.deployment_records():
+            if record.id in self.deployments:
+                continue
+            try:
+                spec = DeploymentSpec.model_validate(record.spec)
+            except ValueError:
+                continue
+            dep = Deployment(id=record.id, spec=spec, served_name=record.served_name,
+                             created_at=record.created_at or time.time())
+            dep.vram_plan = dep.vram_estimate = int(spec.options.get("vram_estimate") or 0)
+            if spec.residency == "on_demand":
+                dep.status, dep.message = "cold", "Loads on first request"
+            else:
+                dep.status, dep.message = "stopped", "Stopped when the server last shut down"
+            self.deployments[dep.id] = dep
 
     async def restart(self, dep_id: str) -> Deployment | None:
         dep = self.deployments.get(dep_id)
@@ -281,7 +358,8 @@ class DeploymentManager:
         return self.create(spec)
 
     async def shutdown(self) -> None:
-        results = await asyncio.gather(*(self.stop(dep_id) for dep_id in list(self.deployments)),
+        # remove=False keeps the workbench records, so the next server start can rebuild the set.
+        results = await asyncio.gather(*(self.stop(dep_id, remove=False) for dep_id in list(self.deployments)),
                                        return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):

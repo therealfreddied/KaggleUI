@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from ..config import Paths
 from ..proc import ManagedProcess
 from ..system.probe import HardwareProfile
+from ..workbench.jobs import JobStore
+from ..workbench.store import WorkbenchStore
 
 ProgressFn = Callable[[str, "float | None", str], None]
 
@@ -25,6 +27,8 @@ class EngineContext:
     internal_key: str
     main_port: int
     processes: list[ManagedProcess] = field(default_factory=list)
+    jobs: JobStore | None = None
+    workbench: WorkbenchStore | None = None
 
     def env(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         env = {

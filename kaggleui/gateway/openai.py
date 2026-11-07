@@ -71,7 +71,7 @@ async def create_world(request: Request):
         check_access(request, "openai")
         st = state_of(request)
         body = await _json(request)
-        dep = find(request, body.get("model"), "world")
+        dep = await find(request, body.get("model"), "world")
         if dep.info.get("result_kind") != "scene":
             raise GatewayError(400, "This runner generates video. Use /v1/videos.")
         image = base64.b64decode(body["input_reference_b64"]) if body.get("input_reference_b64") else None
@@ -187,15 +187,13 @@ async def chat_completions(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
-        dep = find(request, body.get("model"), "text")
-        backend = dep.backend
-        assert backend
+        dep = await find(request, body.get("model"), "text")
+        assert dep.backend
+        optimize = state_of(request).optimize
         if body.get("stream"):
-            return StreamingResponse(sse_openai(backend.chat_stream(body), dep.served_name),
+            return StreamingResponse(sse_openai(optimize.chat_stream(dep, body), dep.served_name),
                                      media_type="text/event-stream", headers=SSE_HEADERS)
-        resp = await backend.chat(body)
-        resp["model"] = dep.served_name
-        return resp
+        return await optimize.chat(dep, body)
     except Exception as e:  # noqa: BLE001
         return openai_error(wrap(e))
 
@@ -205,7 +203,7 @@ async def completions(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
-        dep = find(request, body.get("model"), "text")
+        dep = await find(request, body.get("model"), "text")
         assert dep.backend
         resp = await dep.backend.completions({**body, "stream": False})
         resp["model"] = dep.served_name
@@ -219,7 +217,7 @@ async def embeddings(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
-        dep = find(request, body.get("model"), "text")
+        dep = await find(request, body.get("model"), "text")
         assert dep.backend
         resp = await dep.backend.embeddings(body)
         resp["model"] = dep.served_name
@@ -233,7 +231,7 @@ async def images(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
-        dep = find(request, body.get("model"), "image")
+        dep = await find(request, body.get("model"), "image")
         assert dep.backend
         out = await dep.backend.images(body)
         imgs = out.get("images") or []
@@ -251,11 +249,11 @@ async def speech(request: Request):
         check_access(request, "openai")
         body = await _json(request)
         try:
-            dep = find(request, body.get("model"), "tts")
+            dep = await find(request, body.get("model"), "tts")
         except GatewayError:
             if not body.get("model"):
                 raise
-            dep = find(request, body["model"], "audio")  # compatibility for audio models previously mislabeled TTS
+            dep = await find(request, body["model"], "audio")  # compatibility for audio models previously mislabeled TTS
         assert dep.backend
         data, media = await dep.backend.speech(body)
         return Response(data, media_type=media)
@@ -268,7 +266,7 @@ async def audio_generation(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
-        dep = find(request, body.get("model"), "audio")
+        dep = await find(request, body.get("model"), "audio")
         assert dep.backend
         prompt = str(body.get("prompt") or body.get("input") or "").strip()
         if not prompt:
@@ -283,7 +281,7 @@ async def audio_generation(request: Request):
 async def voices(request: Request, model: str | None = None):
     try:
         check_access(request, "openai")
-        dep = find(request, model, "tts")
+        dep = await find(request, model, "tts")
         assert dep.backend
         return await dep.backend.voice_info()
     except Exception as e:  # noqa: BLE001
@@ -297,7 +295,7 @@ async def all_voices(request: Request, model: str | None = None):
         check_access(request, "openai")
         deps = [d for d in state_of(request).manager.ready() if d.spec.modality == "tts" and d.backend]
         if model:
-            deps = [find(request, model, "tts")]
+            deps = [await find(request, model, "tts")]
 
         async def entry(dep):
             info = await asyncio.wait_for(dep.backend.voice_info(), timeout=15)
@@ -346,7 +344,7 @@ async def _transcribe(request: Request, task: str):
     upload = form.get("file")
     if not isinstance(upload, UploadFile) and not hasattr(upload, "read"):
         raise GatewayError(400, "Missing 'file' upload")
-    dep = find(request, form.get("model"), "stt")
+    dep = await find(request, form.get("model"), "stt")
     assert dep.backend
     granularities = form.getlist("timestamp_granularities[]") or form.getlist("timestamp_granularities")
     params = {"language": form.get("language"), "prompt": form.get("prompt"), "task": task,
@@ -393,7 +391,7 @@ async def paint_start_frame(request: Request, dep, body: dict) -> tuple[bytes, s
     """World models don't read text. Turn the prompt into a first frame with a running image model."""
     st = state_of(request)
     wanted = body.get("start_frame_model")
-    painter = find(request, wanted, "image") if wanted else next(iter(st.manager.ready("image")), None)
+    painter = await find(request, wanted, "image") if wanted else next(iter(st.manager.ready("image")), None)
     if painter is None:
         raise GatewayError(400, f"{dep.served_name} doesn't take text; it starts from an image. To start from a "
                                 "description, also deploy an image model (SD Turbo is small and fast) and KaggleUI "
@@ -415,7 +413,7 @@ async def start_frame(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
-        dep = find(request, body.get("model"), "world")
+        dep = await find(request, body.get("model"), "world")
         data, painter = await paint_start_frame(request, dep, body)
         return {"b64_json": base64.b64encode(data).decode(), "painted_with": painter}
     except Exception as e:  # noqa: BLE001
@@ -442,7 +440,7 @@ async def create_video(request: Request):
         dep = None
         for modality in ("video", "world"):
             try:
-                dep = find(request, model, modality)
+                dep = await find(request, model, modality)
                 break
             except GatewayError:
                 continue

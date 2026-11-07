@@ -195,7 +195,8 @@ function DeploymentCard({ d, focus }: { d: Deployment; focus: boolean }) {
       <Drawer open={configure} onClose={() => setConfigure(false)} title={`Retry ${d.name}`}>
         <div className="space-y-5 p-5">
           <p className="text-[13px] text-fg-2">Adjust this model’s settings and start a new deployment using its cached download.</p>
-          <OptionsForm item={{ modality: d.modality, source: d.spec.model.source === "curated" ? "hf" : d.spec.model.source,
+          <OptionsForm item={{ modality: d.modality,
+            source: d.spec.model.source === "curated" ? "hf" : d.spec.model.source === "artifact" ? "attached" : d.spec.model.source,
             engine: d.spec.model.engine, custom_code: /trust_remote_code|custom code|custom Python/i.test(d.error ?? "") }}
             options={options} onChange={setOptions} />
           <Button variant="primary" busy={busy === "retry"} onClick={retry}>Deploy with these settings</Button>

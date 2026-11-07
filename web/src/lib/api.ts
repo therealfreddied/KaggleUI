@@ -1,18 +1,31 @@
 import type {
+  ArtifactManifest,
+  CacheProfile,
+  ArtifactVerify,
+  DatasetReport,
+  EvalReport,
+  HarnessProfileInfo,
+  TrainingRun,
   Assessment,
   CatalogItem,
   CatalogMeta,
   Deployment,
+  DeploymentSet,
   DeploymentSpec,
+  Job,
   Modality,
   ModelImport,
+  OptimizationProfile,
   Overview,
+  PlacementPreview,
   SearchResult,
   SecretDetails,
   Session,
   Settings,
+  StorageConnection,
   StudioModel,
   UpdateStatus,
+  WorkbenchSnapshot,
 } from "./types";
 
 export class ApiError extends Error {
@@ -64,6 +77,58 @@ export const api = {
   regenerate: (which: "password" | "api_key") =>
     request<Overview["credentials"]>("/_kui/api/credentials/regenerate", { method: "POST", body: json({ which }) }),
   meta: () => request<CatalogMeta>("/_kui/api/catalog/meta"),
+  jobs: (p: { kind?: string; state?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (p.kind) qs.set("kind", p.kind);
+    if (p.state) qs.set("state", p.state);
+    if (p.limit) qs.set("limit", String(p.limit));
+    return request<{ jobs: Job[] }>(`/_kui/api/jobs?${qs}`).then((r) => r.jobs);
+  },
+  job: (id: string) => request<Job>(`/_kui/api/jobs/${encodeURIComponent(id)}`),
+  jobLogs: (id: string, offset = 0, limit = 400) =>
+    request<{ job: Job; lines: string[] }>(
+      `/_kui/api/jobs/${encodeURIComponent(id)}/logs?offset=${offset}&limit=${limit}`),
+  cancelJob: (id: string) => request<Job>(`/_kui/api/jobs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  resumeJob: (id: string) => request<Job>(`/_kui/api/jobs/${encodeURIComponent(id)}/resume`, { method: "POST" }),
+  workbench: () => request<WorkbenchSnapshot>("/_kui/api/workbench"),
+  deploymentSets: () =>
+    request<{ sets: DeploymentSet[]; active: string | null }>("/_kui/api/workbench/deployment-sets"),
+  createDeploymentSet: (set: Partial<DeploymentSet> & { name: string }) =>
+    request<DeploymentSet>("/_kui/api/workbench/deployment-sets", { method: "POST", body: json(set) }),
+  deleteDeploymentSet: (id: string) =>
+    request<{ ok: boolean }>(`/_kui/api/workbench/deployment-sets/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  activateDeploymentSet: (id: string) =>
+    request<{ active: string }>(`/_kui/api/workbench/deployment-sets/${encodeURIComponent(id)}/activate`,
+      { method: "POST" }),
+  storageConnections: () => request<{ connections: StorageConnection[] }>("/_kui/api/workbench/storage"),
+  saveStorageConnection: (connection: Partial<StorageConnection> & { name: string; kind: StorageConnection["kind"] }) =>
+    request<StorageConnection>("/_kui/api/workbench/storage", { method: "POST", body: json(connection) }),
+  deleteStorageConnection: (name: string) =>
+    request<{ ok: boolean }>(`/_kui/api/workbench/storage/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  testStorageConnection: (name: string) =>
+    request<{ ok: boolean; error?: string; [key: string]: unknown }>(
+      `/_kui/api/workbench/storage/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  artifacts: () => request<{ artifacts: ArtifactManifest[] }>("/_kui/api/workbench/artifacts"),
+  artifact: (id: string, version?: string) =>
+    request<ArtifactManifest>(`/_kui/api/workbench/artifacts/${encodeURIComponent(id)}` +
+      (version ? `?version=${encodeURIComponent(version)}` : "")),
+  verifyArtifact: (id: string, version?: string) =>
+    request<ArtifactVerify>(`/_kui/api/workbench/artifacts/${encodeURIComponent(id)}/verify`,
+      { method: "POST", body: json({ version }) }),
+  exportArtifact: (id: string, body: { connection: string; target_path?: string; version?: string; confirm?: boolean }) =>
+    request<Job>(`/_kui/api/workbench/artifacts/${encodeURIComponent(id)}/export`, { method: "POST", body: json(body) }),
+  deleteArtifact: (id: string, body: { version: string; confirm: boolean }) =>
+    request<{ ok: boolean }>(`/_kui/api/workbench/artifacts/${encodeURIComponent(id)}/delete`,
+      { method: "POST", body: json(body) }),
+  restoreArtifact: (body: { connection: string; remote: string; name: string; kind?: ArtifactManifest["kind"] }) =>
+    request<Job>("/_kui/api/workbench/restore", { method: "POST", body: json(body) }),
+  optimizeSettings: () =>
+    request<{ optimize: OptimizationProfile; cache: CacheProfile }>("/_kui/api/workbench/optimize"),
+  saveOptimizeSettings: (patch: { optimize?: Partial<OptimizationProfile>; cache?: Partial<CacheProfile> }) =>
+    request<{ optimize: OptimizationProfile; cache: CacheProfile }>("/_kui/api/workbench/optimize",
+      { method: "PUT", body: json(patch) }),
+  placementPreview: (body: { spec: unknown; gguf?: string }) =>
+    request<PlacementPreview>("/_kui/api/workbench/placement/preview", { method: "POST", body: json(body) }),
   modelImports: () => request<ModelImport[]>("/_kui/api/catalog/imports"),
   importModel: (body: { url: string; kind?: string; name?: string; revision?: string }) =>
     request<ModelImport>("/_kui/api/catalog/imports", { method: "POST", body: json(body) }),
@@ -126,6 +191,36 @@ export const api = {
     request<SecretDetails>(`/_kui/api/secrets/${name}`, { method: "PUT", body: json({ value }) }),
   clearSecret: (name: string) => request<SecretDetails>(`/_kui/api/secrets/${name}`, { method: "DELETE" }),
   reloadSecrets: () => request<SecretDetails>("/_kui/api/secrets/reload", { method: "POST" }),
+  mlDatasets: () => request<{ datasets: ArtifactManifest[] }>("/_kui/api/workbench/ml/datasets"),
+  uploadDataset: async (file: File, name: string): Promise<{ artifact: string; report: DatasetReport }> => {
+    const form = new FormData();
+    form.append("file", file);
+    return request(`/_kui/api/workbench/ml/datasets?name=${encodeURIComponent(name)}`, { method: "POST", body: form });
+  },
+  validateDataset: async (file: File): Promise<DatasetReport> => {
+    const form = new FormData();
+    form.append("file", file);
+    return request("/_kui/api/workbench/ml/datasets/validate", { method: "POST", body: form });
+  },
+  startTraining: (run: Partial<TrainingRun>) =>
+    request<Job>("/_kui/api/workbench/ml/train", { method: "POST", body: json(run) }),
+  cancelTraining: (id: string) =>
+    request<Job>(`/_kui/api/workbench/ml/train/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  resumeTraining: (id: string) =>
+    request<Job>(`/_kui/api/workbench/ml/train/${encodeURIComponent(id)}/resume`, { method: "POST" }),
+  conversions: () => request<{ jobs: Job[]; artifacts: ArtifactManifest[] }>("/_kui/api/workbench/ml/convert"),
+  convertArtifact: (body: { artifact_id: string; quant: string; out_name?: string }) =>
+    request<Job>("/_kui/api/workbench/ml/convert", { method: "POST", body: json(body) }),
+  edits: () => request<{ jobs: Job[] }>("/_kui/api/workbench/ml/edit"),
+  studioEdit: (body: { source_repo: string; method: "quick" | "heretic"; trials?: number; quantize?: boolean; name?: string }) =>
+    request<Job>("/_kui/api/workbench/ml/edit", { method: "POST", body: json(body) }),
+  harnessProfiles: () => request<{ profiles: HarnessProfileInfo[] }>("/_kui/api/workbench/ml/harness"),
+  runHarness: (deployment: string, profile: string) =>
+    request<EvalReport>("/_kui/api/workbench/ml/harness", { method: "POST", body: json({ deployment, profile }) }),
+  teacherDatasets: () =>
+    request<{ jobs: Job[]; datasets: ArtifactManifest[] }>("/_kui/api/workbench/ml/teacher"),
+  startTeacher: (body: { deployment: string; prompts: string[]; name?: string; max_new_tokens?: number; budget_tokens?: number }) =>
+    request<Job>("/_kui/api/workbench/ml/teacher", { method: "POST", body: json(body) }),
 };
 
 /** Calls to the public gateway from the Studio (cookie auth + studio header). */

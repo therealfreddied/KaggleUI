@@ -84,17 +84,18 @@ async def _native(request: Request, path: str, body: dict, dep) -> StreamingResp
 async def _chatlike(request: Request, generate: bool):
     check_access(request, "ollama")
     body = await _body(request)
-    dep = find(request, body.get("model"), "text")
+    dep = await find(request, body.get("model"), "text")
     backend = dep.backend
     assert backend
     path = "/api/generate" if generate else "/api/chat"
     if "ollama" in backend.native and backend.base_url:
         return await _native(request, path, body, dep)
     oai = ollama_generate_to_openai(body) if generate else ollama_chat_to_openai(body)
+    optimize = state_of(request).optimize
     if body.get("stream", True):
-        return StreamingResponse(openai_stream_to_ollama(backend.chat_stream(oai), dep.served_name, generate),
+        return StreamingResponse(openai_stream_to_ollama(optimize.chat_stream(dep, oai), dep.served_name, generate),
                                  media_type="application/x-ndjson")
-    resp = await backend.chat({**oai, "stream": False})
+    resp = await optimize.chat(dep, {**oai, "stream": False})
     out = openai_to_ollama_chat(resp, dep.served_name)
     if generate:
         out["response"] = out.pop("message", {}).get("content", "")
@@ -123,7 +124,7 @@ async def embed(request: Request):
     try:
         check_access(request, "ollama")
         body = await _body(request)
-        dep = find(request, body.get("model"), "text")
+        dep = await find(request, body.get("model"), "text")
         backend = dep.backend
         assert backend
         if "ollama" in backend.native and backend.base_url:
@@ -143,7 +144,7 @@ async def show(request: Request):
     try:
         check_access(request, "ollama")
         body = await _body(request)
-        dep = find(request, body.get("model") or body.get("name"), "text")
+        dep = await find(request, body.get("model") or body.get("name"), "text")
         if "ollama" in dep.backend.native and dep.backend.base_url:
             return await _native(request, "/api/show", {"model": dep.backend.upstream_model}, dep)
         caps = ["thinking" if cap == "reasoning" else cap for cap in dep.info.get("capabilities", [])]

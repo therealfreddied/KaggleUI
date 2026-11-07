@@ -14,7 +14,7 @@ from kaggleui.server.state import AppState
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    for n in (*secretstore.SECRET_NAMES, "HUGGING_FACE_HUB_TOKEN", "KAGGLEUI_KAGGLE_SECRETS"):
+    for n in (*secretstore.SECRET_NAMES, "HUGGING_FACE_HUB_TOKEN", "KAGGLEUI_ATTACHED_SECRETS"):
         monkeypatch.delenv(n, raising=False)
     secretstore._sources.clear()
     yield
@@ -36,7 +36,7 @@ def fake_kaggle(monkeypatch, secrets: dict):
 
 def test_alias_names_are_found(monkeypatch):
     fake_kaggle(monkeypatch, {"hf_token": "hf_abc", "NGROK_TOKEN": "ng_1"})
-    found = secretstore.load_kaggle_secrets()
+    found = secretstore.load_attached_secrets()
     assert found["HF_TOKEN"] and found["NGROK_AUTHTOKEN"]
     assert os.environ["HF_TOKEN"] == "hf_abc" and os.environ["HUGGING_FACE_HUB_TOKEN"] == "hf_abc"
     assert secretstore._sources["HF_TOKEN"] == "kaggle"
@@ -45,9 +45,9 @@ def test_alias_names_are_found(monkeypatch):
 def test_reload_picks_up_secret_added_later(monkeypatch):
     store: dict = {}
     fake_kaggle(monkeypatch, store)
-    assert not secretstore.load_kaggle_secrets()["HF_TOKEN"]
+    assert not secretstore.load_attached_secrets()["HF_TOKEN"]
     store["HF_TOKEN"] = "hf_new"
-    assert secretstore.load_kaggle_secrets(refresh=True)["HF_TOKEN"]
+    assert secretstore.load_attached_secrets(refresh=True)["HF_TOKEN"]
 
 
 def test_local_store_persists_with_private_permissions(tmp_path):
@@ -106,3 +106,25 @@ def test_package_exports_launch_and_stop():
     import kaggleui
 
     assert callable(kaggleui.launch) and callable(kaggleui.stop)
+
+
+def test_colab_userdata_is_used_when_kaggle_is_absent(monkeypatch):
+    colab = types.ModuleType("google.colab")
+
+    class Userdata:
+        @staticmethod
+        def get(label):
+            if label == "HF_TOKEN":
+                return "hf_colab"
+            raise Exception("SecretNotFoundError")
+
+    colab.userdata = Userdata
+    google = types.ModuleType("google")
+    google.colab = colab
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.colab", colab)
+    found = secretstore.load_attached_secrets()
+    assert found["HF_TOKEN"]
+    assert secretstore.secret_details()["kaggle"] == {"state": "available", "source": "colab", "error": None}
+    assert secretstore.attached_sourced() == ["HF_TOKEN"]
+

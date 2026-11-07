@@ -1,5 +1,6 @@
-import { Boxes, CornerDownLeft, Download, Gauge, HardDrive, KeyRound, LayoutGrid, ListChecks, LogOut, MessageSquare, Moon, Plus, Search, Server, Sun, Wand2 } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Boxes, CornerDownLeft, Download, Gauge, HardDrive, KeyRound, LayoutGrid, ListChecks, LogOut, Menu, MessageSquare, Moon, Plus, Search, Server, Sun, Wand2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
 
 import { api } from "../lib/api";
@@ -99,7 +100,7 @@ function QuickJump({ open, close }: { open: boolean; close: () => void }) {
             }}
             placeholder="Jump to a page or a running model"
             aria-label="Quick navigation"
-            className="h-14 min-w-0 flex-1 bg-transparent text-[15px] text-fg placeholder:text-fg-3 focus:outline-none focus-visible:outline-none"
+            className="h-14 min-w-0 flex-1 bg-transparent text-[16px] text-fg placeholder:text-fg-3 focus:outline-none focus-visible:outline-none sm:text-[15px]"
           />
           <span className="kbd">esc</span>
         </div>
@@ -152,11 +153,83 @@ function MachineChip() {
   );
 }
 
+function MobileNav({ open, close, ready, busy }: { open: boolean; close: () => void; ready: number; busy: number }) {
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    closeRef.current?.focus();
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close();
+      if (event.key !== "Tab" || !panelRef.current) return;
+      const items = [...panelRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+      requestAnimationFrame(() => document.querySelector<HTMLButtonElement>(".mobile-menu-button")?.focus());
+    };
+  }, [open, close]);
+  if (!open) return null;
+  return createPortal(
+    <div className="mobile-nav">
+      <button className="mobile-nav-scrim" aria-label="Close navigation" onClick={close} />
+      <aside ref={panelRef} id="mobile-nav" className="mobile-nav-panel" role="dialog" aria-modal="true" aria-label="Workspace">
+        <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-line px-4">
+          <Brand small />
+          <button ref={closeRef} className="toolbar-icon" aria-label="Close navigation" onClick={close}>
+            <X className="size-4" />
+          </button>
+        </div>
+        <nav className="min-h-0 flex-1 overflow-y-auto scroll-thin p-2" aria-label="Workspace">
+          {NAV.map(({ to, label, icon: Icon, end }) => (
+            <NavLink key={to} to={to} end={end} onClick={close} className={({ isActive }) => cx("mobile-nav-link", isActive && "is-active")}>
+              <Icon className="size-[17px] shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{label}</span>
+              {to === "/deployments" && (ready > 0 || busy > 0) && (
+                <span className="nav-count" title={`${ready} ready${busy ? `, ${busy} starting` : ""}`}>
+                  {busy ? `${ready}+${busy}` : ready}
+                </span>
+              )}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="shrink-0 border-t border-line p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+          <Link to="/deploy/new" onClick={close} className="block">
+            <Button variant="primary" className="w-full">
+              <Plus className="size-4" /> Deploy a model
+            </Button>
+          </Link>
+        </div>
+      </aside>
+    </div>,
+    document.body,
+  );
+}
+
 export function Shell({ children }: { children: ReactNode }) {
   const [theme, toggle] = useTheme();
   const [jump, setJump] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
   const { overview } = useLive();
   const location = useLocation();
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
@@ -209,6 +282,16 @@ export function Shell({ children }: { children: ReactNode }) {
                 Deploy
               </Button>
             </Link>
+            <button
+              onClick={() => setNavOpen(true)}
+              className="mobile-menu-button toolbar-icon"
+              aria-label="Open navigation"
+              aria-expanded={navOpen}
+              aria-controls="mobile-nav"
+            >
+              <Menu className="size-5" />
+              {(ready > 0 || busy > 0) && <span className="mobile-menu-dot" aria-hidden />}
+            </button>
           </div>
         </div>
       </header>
@@ -230,6 +313,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <CommunityLinks />
       </footer>
       <QuickJump open={jump} close={() => setJump(false)} />
+      <MobileNav open={navOpen} close={closeNav} ready={ready} busy={busy} />
     </div>
   );
 }

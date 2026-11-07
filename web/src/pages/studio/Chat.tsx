@@ -207,13 +207,13 @@ export default function ChatStudio({ model }: { model: StudioModel }) {
   }
 
   return (
-    <div className="panel studio-chat flex h-[calc(100dvh-320px)] min-h-[520px] flex-col overflow-hidden">
+    <div className="panel studio-chat flex h-[calc(100dvh-300px)] min-h-[420px] flex-col overflow-hidden sm:h-[calc(100dvh-320px)] sm:min-h-[520px]">
       <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
-        <div className="flex items-center gap-2 text-[12.5px] text-fg-2">
+        <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-fg-2">
           <span className={cx("dot", ready ? "dot-live" : "dot-warn")} />
-          {ready ? "Live replies" : "HTTP mode · replies appear when complete"}
+          <span className="truncate">{ready ? "Live replies" : <>HTTP mode<span className="hidden sm:inline"> · replies appear when complete</span></>}</span>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-1">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
           {thinking && (
             <div className="mr-1 flex items-center gap-2" title="How much the model reasons before answering">
               <span className="readout hidden sm:inline">Reasoning</span>
@@ -254,7 +254,7 @@ export default function ChatStudio({ model }: { model: StudioModel }) {
           <div className="flex h-full flex-col items-center justify-center text-center">
             <div className="display max-w-xl text-[32px] text-fg">{model.name}</div>
             <p className="mt-3 max-w-sm text-[14px] text-fg-3">What would you like to work on?</p>
-            <div className="mt-6 flex flex-wrap justify-center gap-2">{["Explain something simply", "Help me write some code", "Brainstorm an idea"].map(prompt => <button key={prompt} onClick={() => setInput(prompt)} className="rounded-lg border border-line px-3 py-2 text-[12px] text-fg-2 transition-colors hover:border-line-2 hover:bg-panel-2">{prompt}</button>)}</div>
+            <div className="mt-6 flex flex-wrap justify-center gap-2">{["Explain something simply", "Help me write some code", "Brainstorm an idea"].map(prompt => <button key={prompt} onClick={() => setInput(prompt)} className="min-h-11 rounded-lg border border-line px-3 py-2 text-[12px] text-fg-2 transition-colors hover:border-line-2 hover:bg-panel-2">{prompt}</button>)}</div>
           </div>
         )}
         {messages.map((m, i) =>

@@ -240,6 +240,24 @@ p { text-wrap: pretty; }
 }
 .quick-jump:hover { border-color: var(--line-2); color: var(--fg); }
 
+.mobile-menu-button { display: none; position: relative; width: 40px; height: 40px; }
+.mobile-menu-dot { position: absolute; top: 9px; right: 9px; width: 6px; height: 6px; border-radius: 999px; background: var(--good); box-shadow: 0 0 0 2px var(--bg); }
+.mobile-nav { position: fixed; inset: 0; z-index: 60; display: flex; }
+.mobile-nav-scrim { position: absolute; inset: 0; width: 100%; background: rgb(8 8 7 / 0.55); backdrop-filter: blur(3px); animation: fade-in 160ms ease both; }
+.mobile-nav-panel {
+  position: relative; display: flex; flex-direction: column; width: min(86vw, 340px); height: 100%;
+  background: var(--panel); border-right: 1px solid var(--line); box-shadow: 30px 0 80px -30px rgb(0 0 0 / 0.6);
+  animation: slide-in-left 220ms cubic-bezier(.2,.7,.2,1) both;
+}
+.mobile-nav-link {
+  display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 12px; border-radius: 9px;
+  color: var(--fg-2); font-size: 14px; font-weight: 450; transition: background 160ms, color 160ms;
+}
+.mobile-nav-link:hover, .mobile-nav-link.is-active { color: var(--fg); background: var(--panel-2); }
+.mobile-nav-link.is-active { box-shadow: inset 2px 0 0 var(--fg); font-weight: 500; }
+@keyframes slide-in-left { from { transform: translateX(-100%); } to { transform: translateX(0); } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
 .app-main { max-width: 1320px; margin: 0 auto; width: 100%; min-height: calc(100dvh - 140px); padding: 44px 28px 96px; }
 .app-footer {
   width: 100%; max-width: 1320px; margin: 0 auto; padding: 22px 28px 28px; border-top: 1px solid var(--line);
@@ -248,20 +266,49 @@ p { text-wrap: pretty; }
 .app-footer a:hover { color: var(--fg); }
 .page-enter { animation: rise 260ms cubic-bezier(.2,.7,.2,1) both; }
 
-@media (max-width: 1180px) {
+@media (min-width: 1181px) {
   .app-header-inner { grid-template-columns: auto 1fr; grid-template-rows: 56px 44px; height: auto; row-gap: 0; }
   .app-nav { grid-column: 1 / -1; grid-row: 2; margin: 0 -6px; }
   .app-tools { justify-self: end; }
 }
+@media (max-width: 1180px) {
+  .app-header-inner {
+    grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: 60px; height: auto;
+    padding: 0 max(16px, env(safe-area-inset-left)); gap: 10px;
+  }
+  .app-nav { display: none; }
+  .app-tools { grid-column: 2; justify-self: end; gap: 2px; }
+  .mobile-menu-button { display: inline-grid; }
+}
+@media (max-width: 900px) {
+  .app-main { padding-top: 24px; }
+}
 @media (max-width: 640px) {
-  .app-header-inner { padding: 0 16px; gap: 12px; }
-  .app-main { padding: 28px 16px 72px; }
-  .app-footer { padding-inline: 16px; }
+  .app-header-inner { padding: 0 16px; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); gap: 8px; }
+  .app-main { padding: 22px 16px 64px; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  .app-footer { padding: 18px 16px max(20px, env(safe-area-inset-bottom)); }
   .machine-chip .hide-sm { display: none; }
+  .machine-chip { gap: 7px; padding-inline: 9px; }
+  .page-head { margin-bottom: 24px; gap: 14px; }
+  .page-head h1 { font-size: clamp(30px, 9vw, 40px); }
+  .page-head p { margin-top: 8px; font-size: 13.5px; }
+  .section-heading { gap: 8px; }
+  .command-dialog { margin: 8dvh auto auto; }
 }
 @media (max-width: 420px) {
   .machine-chip .hide-xs { display: none; }
-  .app-header-inner { gap: 8px; }
+  .app-header-inner { gap: 6px; }
+}
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select { min-height: 44px; font-size: 16px; }
+  textarea { min-height: 44px; font-size: 16px; }
+  .app-link, .quick-jump, .machine-chip { height: 40px; }
+  .toolbar-icon { width: 40px; height: 40px; }
+  .omp-button { min-height: 44px; }
+  .catalog-tabs button, .segmented > button, .copy-button, .copy-reveal { min-height: 40px; }
+  .catalog-filter-preset, .catalog-capability-filter, .catalog-filter-chip { min-height: 36px; }
+  .copy-reveal { min-width: 40px; }
+  .run-row, .shortcut { min-height: 56px; }
 }
 
 /* Page header */

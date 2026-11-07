@@ -37,7 +37,7 @@ export default function JobsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-[22px] font-semibold tracking-[-0.02em]">Jobs</h1>
           <p className="mt-1 text-[13.5px] text-muted">
@@ -53,8 +53,8 @@ export default function JobsPage() {
         </Empty>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-          <div className="overflow-hidden rounded-xl border border-line">
-            <table className="w-full text-left text-[13px]">
+          <div className="overflow-x-auto scroll-thin rounded-xl border border-line">
+            <table className="w-full min-w-[520px] text-left text-[13px]">
               <thead className="bg-bg-2 text-muted">
                 <tr>
                   <th className="px-3 py-2 font-medium">Kind</th>

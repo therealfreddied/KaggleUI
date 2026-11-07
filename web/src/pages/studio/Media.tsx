@@ -103,12 +103,12 @@ export function ImageStudio({ model }: { model: StudioModel }) {
         </Field>
         <Slider label="Steps" value={steps} min={1} max={60} onChange={setSteps} />
         <Slider label="Guidance" value={guidance} min={0} max={15} step={0.5} onChange={setGuidance} format={(v) => v.toFixed(1)} />
-        <div className="grid grid-cols-3 gap-2">
-          <Field label="Size">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="col-span-2 sm:col-span-1"><Field label="Size">
             <Select value={size} onChange={(e) => setSize(e.target.value)}>
               {[...new Set([size, ...SIZES])].map((s) => <option key={s}>{s}</option>)}
             </Select>
-          </Field>
+          </Field></div>
           <Field label="Seed">
             <Input value={seed} onChange={(e) => setSeed(e.target.value.replace(/\D/g, ""))} placeholder="random" />
           </Field>

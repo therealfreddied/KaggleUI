@@ -85,8 +85,8 @@ function Datasets() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-line">
-        <table className="w-full text-left text-[13px]">
+      <div className="overflow-x-auto scroll-thin rounded-xl border border-line">
+        <table className="w-full min-w-[560px] text-left text-[13px]">
           <thead className="bg-bg-2 text-muted">
             <tr><th className="px-3 py-2 font-medium">Artifact</th><th className="px-3 py-2 font-medium">Format</th>
               <th className="px-3 py-2 font-medium">Samples</th><th className="px-3 py-2 font-medium">Created</th></tr>
@@ -292,8 +292,8 @@ function Evaluate() {
             </Chip>
             <span className="text-muted">{(report.score * 100).toFixed(1)}% · {report.artifact ?? report.report_path}</span>
           </div>
-          <div className="overflow-hidden rounded-xl border border-line">
-            <table className="w-full text-left text-[13px]">
+          <div className="overflow-x-auto scroll-thin rounded-xl border border-line">
+            <table className="w-full min-w-[520px] text-left text-[13px]">
               <thead className="bg-bg-2 text-muted">
                 <tr><th className="px-3 py-2 font-medium">Case</th><th className="px-3 py-2 font-medium">Pass</th>
                   <th className="px-3 py-2 font-medium">Detail</th></tr>

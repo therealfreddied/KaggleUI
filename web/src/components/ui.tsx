@@ -31,7 +31,7 @@ export function Button({
       {...rest}
       disabled={rest.disabled || busy}
       className={cx(
-        "inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium",
+        "omp-button inline-flex select-none items-center justify-center gap-2 whitespace-nowrap rounded-lg font-medium",
         "transition-[background,border-color,color,box-shadow,transform,opacity] duration-150 ease-out",
         "disabled:pointer-events-none disabled:opacity-40 active:scale-[0.98]",
         size === "sm" && "h-8 px-3 text-[13px]",
@@ -106,7 +106,7 @@ export function Segmented<T extends string>({
   size?: "sm" | "md";
 }) {
   return (
-    <div className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-[10px] border border-line bg-bg-2 p-[3px] scroll-thin">
+    <div className="segmented inline-flex max-w-full gap-0.5 overflow-x-auto rounded-[10px] border border-line bg-bg-2 p-[3px] scroll-thin">
       {options.map((o) => (
         <button
           key={o.value}
@@ -165,7 +165,7 @@ export function CopyButton({ text, className, label }: { text: string; className
       title={copied ? "Copied" : "Copy"}
       aria-label={label ?? "Copy"}
       className={cx(
-        "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-fg-3 transition-colors hover:bg-panel-3 hover:text-fg",
+        "copy-button inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-fg-3 transition-colors hover:bg-panel-3 hover:text-fg",
         className,
       )}
     >
@@ -188,7 +188,7 @@ export function CopyField({ value, secret, label }: { value: string; secret?: bo
           <button
             type="button"
             onClick={() => setShown(!shown)}
-            className="grid size-7 place-items-center rounded-md text-fg-3 hover:bg-panel-3 hover:text-fg"
+            className="copy-reveal grid size-7 place-items-center rounded-md text-fg-3 hover:bg-panel-3 hover:text-fg"
             title={shown ? "Hide" : "Show"}
             aria-label={shown ? "Hide value" : "Show value"}
           >
@@ -257,20 +257,20 @@ export function Chip({ children, tone = "plain", className }: { children: ReactN
 }
 
 const FIELD =
-  "w-full rounded-lg border border-line bg-bg-2 text-[13.5px] text-fg placeholder:text-fg-3 transition-[border-color,box-shadow] duration-150 " +
+  "w-full rounded-lg border border-line bg-bg-2 text-[16px] text-fg sm:text-[13.5px] placeholder:text-fg-3 transition-[border-color,box-shadow] duration-150 " +
   "hover:border-line-2 focus:border-fg-3 focus:shadow-[0_0_0_3px_var(--signal-soft)] focus:outline-none disabled:opacity-50";
 
 export function Input({ className, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...rest} className={cx(FIELD, "h-9 px-3", className)} />;
+  return <input {...rest} className={cx(FIELD, "h-11 px-3 sm:h-9", className)} />;
 }
 
 export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea {...rest} className={cx(FIELD, "resize-y px-3 py-2.5 leading-relaxed", className)} />;
+  return <textarea {...rest} className={cx(FIELD, "min-h-11 resize-y px-3 py-2.5 leading-relaxed sm:min-h-0", className)} />;
 }
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select {...rest} className={cx(FIELD, "h-9 px-3", className)}>
+    <select {...rest} className={cx(FIELD, "h-11 px-3 sm:h-9", className)}>
       {children}
     </select>
   );

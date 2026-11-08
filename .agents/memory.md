@@ -102,3 +102,15 @@ failure modes already paid for.
 - The wheel is never published by the build step: `dist/` is gitignored, so
   `uv build --wheel` leaves a local artifact only. Uploading (PyPI or a GitHub release asset) is a
   separate manual action.
+
+## 2026-11-08 — fork-only publishing (supersedes the "remotes and publishing" blocker)
+
+- The owner does **not** own `UltraFEmotes/KaggleUI`; it is the upstream fork source and is read-only
+  for this account. Only `therealfreddied/KaggleUI` (`self`) needs to be updated. An `origin` push is
+  not a pending task — do not treat the 403 as an unresolved blocker.
+- Default push target is configured: `git config branch.main.pushRemote self`, so plain
+  `git push --follow-tags` publishes `main` (and the annotated tag) to the fork. `git push --dry-run`
+  → `Everything up-to-date`.
+- Remote layout is intentionally non-standard (upstream stays named `origin`, fork stays `self`).
+  Fetch upstream with `git fetch origin`; push with `git push` or `git push self`.
+- Publishing the wheel is still manual: `dist/` is gitignored, `uv build --wheel` leaves a local file.

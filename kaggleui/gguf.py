@@ -97,6 +97,15 @@ def architecture(meta: dict[str, Any] | None) -> str | None:
     return str(value) if value else None
 
 
+def context_length(meta: dict[str, Any] | None) -> int | None:
+    """Largest declared context window in GGUF metadata (``<arch>.context_length``)."""
+    if not meta:
+        return None
+    windows = [v for k, v in meta.items()
+               if k.endswith(".context_length") and isinstance(v, int) and not isinstance(v, bool) and v > 0]
+    return max(windows) if windows else None
+
+
 def is_moe(meta: dict[str, Any] | None) -> bool:
     """True when the metadata declares experts — the llama.cpp ``--cpu-moe`` precondition."""
     if not meta:

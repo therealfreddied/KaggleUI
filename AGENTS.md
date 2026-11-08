@@ -7,7 +7,7 @@ KaggleUI — a one-cell control panel and multi-protocol inference gateway that 
 A user pastes one cell into a Kaggle notebook:
 
 ```python
-!curl -fsSL https://raw.githubusercontent.com/UltraFEmotes/KaggleUI/main/install.sh | bash
+!curl -fsSL https://raw.githubusercontent.com/therealfreddied/KaggleUI/main/install.sh | bash
 import kaggleui
 kaggleui.launch()
 ```

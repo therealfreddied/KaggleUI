@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
 from ..catalog.imports import ModelImports
 from ..catalog.service import CatalogService
@@ -22,6 +23,7 @@ from ..workbench.residency import Residency
 from ..workbench.store import WorkbenchStore
 from .auth import Auth
 from .events import EventBus
+from .management import ManagementTokens
 from .updates import Updates
 
 
@@ -55,6 +57,8 @@ class AppState:
     storage: StorageManager = field(init=False)
     optimize: Optimizer = field(init=False)
     host: HostAdapter = field(init=False)
+    management: ManagementTokens = field(init=False)
+    auto_backup_task: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.auth = Auth(self.paths.home / "session.key")
@@ -76,6 +80,7 @@ class AppState:
         self.interfaces = InterfaceManager(self)
         self.updates = Updates(self)
         self.host = detect()
+        self.management = ManagementTokens(self.paths.home / "management.json")
 
     def main_url(self) -> str:
         t = self.tunnels.get("main")

@@ -4,7 +4,7 @@ import struct
 
 import pytest
 
-from kaggleui.gguf import GGUFError, has_magic, is_moe, layer_count, read_metadata
+from kaggleui.gguf import GGUFError, context_length, has_magic, is_moe, layer_count, read_metadata
 
 UINT32, STRING, BOOL, ARRAY, UINT64, FLOAT32 = 4, 8, 7, 9, 10, 6
 
@@ -88,3 +88,15 @@ def test_truncated_file_is_an_error_not_a_crash(tmp_path):
         read_metadata(path)
     with pytest.raises(GGUFError):
         read_metadata(tmp_path / "missing.gguf")
+
+
+def test_context_length_helper(tmp_path):
+    path = tmp_path / "m.gguf"
+    path.write_bytes(_gguf({
+        "general.architecture": (STRING, "qwen3"),
+        "qwen3.context_length": (UINT32, 40960),
+        "qwen3.rope.scaling.original_context_length": (UINT32, 32768),
+    }))
+    assert context_length(read_metadata(path)) == 40960
+    assert context_length({"llama.context_length": True}) is None
+    assert context_length(None) is None

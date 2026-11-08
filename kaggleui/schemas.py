@@ -176,6 +176,22 @@ class MLSettings(BaseModel):
     teacher_remote: bool = False
     max_teacher_tokens: int = 200_000
 
+class WorkspaceSettings(BaseModel):
+    """Where the portable workspace lives and how a launch should restore it.
+
+    Secrets stay references by name; this model is safe to publish to a repository.
+    """
+
+    enabled: bool = False
+    repo: str = ""
+    branch: str = "main"
+    path: str = "workspaces/default"
+    token_secret: str = "GITHUB_TOKEN"
+    restore_on_launch: bool = False
+    auto_backup: bool = False
+    auto_start_set: bool = False
+    publish_discovery: bool = False
+
 class Settings(BaseModel):
     access: AccessSettings = Field(default_factory=AccessSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)
@@ -184,6 +200,7 @@ class Settings(BaseModel):
     optimize: OptimizationProfile = Field(default_factory=OptimizationProfile)
     cache: CacheProfile = Field(default_factory=CacheProfile)
     ml: MLSettings = Field(default_factory=MLSettings)
+    workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
 
 
 class Preset(BaseModel):
@@ -202,3 +219,36 @@ class SettingsPatch(BaseModel):
     optimize: dict[str, Any] | None = None
     cache: dict[str, Any] | None = None
     ml: dict[str, Any] | None = None
+    workspace: dict[str, Any] | None = None
+
+class WorkspaceMeta(BaseModel):
+    schema_version: int = 1
+    workspace_id: str
+    name: str = "Default"
+    app_version: str = ""
+    exported_at: float = 0.0
+    source_host: str | None = None
+
+class SecretRequirement(BaseModel):
+    name: str
+    reason: str
+    required: bool = True
+
+class WorkspaceArtifactRef(BaseModel):
+    artifact_id: str
+    version: str
+    kind: str
+    files: int = 0
+    size: int = 0
+
+class WorkspaceDocument(BaseModel):
+    """Portable configuration. Runtime state (pids, ports, URLs, GPU claims) is never included."""
+
+    meta: WorkspaceMeta
+    settings: Settings = Field(default_factory=Settings)
+    deployments: list[DeploymentSpec] = Field(default_factory=list)
+    deployment_sets: list[DeploymentSet] = Field(default_factory=list)
+    active_set: str | None = None
+    storage_connections: list[StorageConnection] = Field(default_factory=list)
+    artifacts: list[WorkspaceArtifactRef] = Field(default_factory=list)
+    secret_requirements: list[SecretRequirement] = Field(default_factory=list)

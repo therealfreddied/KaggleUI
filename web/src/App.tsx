@@ -24,6 +24,7 @@ const Access = lazy(() => import("./pages/Access"));
 const System = lazy(() => import("./pages/System"));
 const Create = lazy(() => import("./pages/Create"));
 const Jobs = lazy(() => import("./pages/Jobs"));
+const Workspace = lazy(() => import("./pages/Workspace"));
 
 function Loading() {
   return (
@@ -66,6 +67,7 @@ function AdminApp() {
           <Route path="/system" element={<System />} />
           <Route path="/create" element={<Create />} />
           <Route path="/jobs" element={<Jobs />} />
+          <Route path="/workspace" element={<Workspace />} />
           <Route path="/login" element={<Navigate to="/studio" replace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -22,12 +22,20 @@ def build_state(*, port: int, tunnel: str | None = None, preset: Preset | None =
     init_local(paths.home)
     paths.apply_env()
     settings = preset.settings.model_copy(deep=True) if preset else Settings()
+    state = AppState(paths=paths, settings=settings, port=port, mock=mock, fake_hw=fake_hw, preset=preset,
+                     secrets=secrets)
+    if preset is None:
+        saved = state.workbench.load_settings()
+        if saved:
+            try:
+                state.settings = Settings.model_validate(saved)
+            except ValueError:
+                pass  # A settings file from a newer/older schema must not stop the server.
+        elif not tunnel:
+            state.settings.exposure.provider = default_tunnel()  # type: ignore[assignment]
     if tunnel:
-        settings.exposure.provider = tunnel  # type: ignore[assignment]
-    elif not preset:
-        settings.exposure.provider = default_tunnel()  # type: ignore[assignment]
-    return AppState(paths=paths, settings=settings, port=port, mock=mock, fake_hw=fake_hw, preset=preset,
-                    secrets=secrets)
+        state.settings.exposure.provider = tunnel  # type: ignore[assignment]
+    return state
 
 
 def make_server(state: AppState, host: str = "127.0.0.1") -> uvicorn.Server:

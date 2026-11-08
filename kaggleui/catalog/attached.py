@@ -10,6 +10,7 @@ import os
 import re
 from pathlib import Path
 
+from .. import gguf
 from ..capabilities import context_length, local_profile
 from ..engines.model_support import model_config
 
@@ -58,8 +59,12 @@ def scan(root: Path = Path("/kaggle/input"), max_depth: int = 7) -> list[dict]:
             firsts = [p for p in ggufs if not SHARD_RE.search(p.name) or "-00001-of-" in p.name]
             for p in firsts:
                 shards = [q for q in ggufs if SHARD_RE.sub("", q.name) == SHARD_RE.sub("", p.name)] or [p]
+                try:
+                    context = gguf.context_length(gguf.read_metadata(p))
+                except (OSError, gguf.GGUFError):
+                    context = None
                 found.append({"path": str(p), "name": f"{label} / {p.name}", "modality": "text",
-                              "engine": "ollama", "size": _size(shards)})
+                              "engine": "ollama", "size": _size(shards), "context_length": context})
             dirnames[:] = []
             continue
 

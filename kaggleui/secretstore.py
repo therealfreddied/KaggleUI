@@ -135,6 +135,13 @@ def attached_sourced() -> list[str]:
     return [n for n, src in _sources.items() if src in ("kaggle", "colab") and os.environ.get(n)]
 
 
+def get(name: str | None) -> str | None:
+    """Current value by secret name, or None. Never log or return it to the browser."""
+    if not name:
+        return None
+    value = os.environ.get(name)
+    return value or None
+
 def secret_status() -> dict[str, bool]:
     return {name: bool(os.environ.get(name)) for name in SECRET_NAMES}
 

@@ -26,6 +26,12 @@ import type {
   StudioModel,
   UpdateStatus,
   WorkbenchSnapshot,
+  InstanceInfo,
+  ManagementToken,
+  WorkspaceDocument,
+  WorkspacePreview,
+  WorkspaceSettings,
+  WorkspaceStatus,
 } from "./types";
 
 export class ApiError extends Error {
@@ -100,6 +106,55 @@ export const api = {
   activateDeploymentSet: (id: string) =>
     request<{ active: string }>(`/_kui/api/workbench/deployment-sets/${encodeURIComponent(id)}/activate`,
       { method: "POST" }),
+  // -- portability ------------------------------------------------------------------------
+  workspace: () => request<{
+    workspace_id: string; name: string; has_settings_file: boolean; settings: Settings;
+    deployments: number; deployment_sets: number; artifacts: number; connections: number;
+  }>("/_kui/api/workspace"),
+  configureWorkspace: (patch: Partial<WorkspaceSettings>) =>
+    request<{ workspace: WorkspaceSettings }>("/_kui/api/workspace/config", { method: "PUT", body: json(patch) }),
+  exportWorkspace: () => request<WorkspaceDocument>("/_kui/api/workspace/export"),
+  importWorkspace: (document: WorkspaceDocument, replace = true, replaceConnections = true) =>
+    request<{ warnings: string[]; deployments: unknown }>("/_kui/api/workspace/import", {
+      method: "POST", body: json({ confirm: true, document, replace, replace_connections: replaceConnections }),
+    }),
+  workspaceStatus: () => request<WorkspaceStatus>("/_kui/api/workspace/status"),
+  workspacePreview: () => request<WorkspacePreview>("/_kui/api/workspace/preview"),
+  backupWorkspace: (body: { force?: boolean; message?: string; confirm?: boolean } = {}) =>
+    request<{ status: string; sha?: string | null; document_hash?: string; path?: string; bytes?: number }>(
+      "/_kui/api/workspace/backup", { method: "POST", body: json(body) }),
+  restoreWorkspace: (body: { confirm?: boolean; resolution?: "replace" | "keep_local" | "fork"; sha?: string } = {}) =>
+    request<{ status: string; warnings?: string[]; diff?: unknown }>("/_kui/api/workspace/restore", {
+      method: "POST", body: json(body),
+    }),
+  workspaceHistory: (limit = 20) =>
+    request<{ sha: string; message: string; date: string | null; url: string | null }[]>(
+      `/_kui/api/workspace/history?limit=${limit}`),
+  rollbackWorkspace: (sha: string) =>
+    request<{ status: string; warnings?: string[] }>("/_kui/api/workspace/rollback", {
+      method: "POST", body: json({ sha, confirm: true }),
+    }),
+  managementKeys: () => request<{ tokens: ManagementToken[]; scopes: string[] }>("/_kui/api/management"),
+  createManagementKey: (label: string, scopes: string[]) =>
+    request<{ token: string; record: ManagementToken; notice: string }>("/_kui/api/management", {
+      method: "POST", body: json({ label, scopes }),
+    }),
+  revokeManagementKey: (id: string) =>
+    request<{ revoked: string }>(`/_kui/api/management/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  instance: () => request<InstanceInfo>("/_kui/api/instance"),
+  cliDeployments: () => request<{ deployments: Deployment[] }>("/_kui/api/workbench/deployments"),
+  modelBackups: () => request<{ artifacts: Record<string, unknown>[] }>("/_kui/api/workbench/model-backups"),
+  remoteModelBackups: (connection: string, target_path = "kaggleui") =>
+    request<{ artifacts: { artifact_id: string; version: string; connection: string; size?: number | null }[] }>(
+      `/_kui/api/workbench/model-backups/remote?connection=${encodeURIComponent(connection)}&target_path=${encodeURIComponent(target_path)}`,
+    ),
+  cliJob: (id: string) => request<Job>(`/_kui/api/workbench/jobs/${encodeURIComponent(id)}`),
+  backupModels: (body: { connection: string; artifact_ids?: string[]; deployment_ids?: string[]; target_path?: string }) =>
+    request<Job>("/_kui/api/workbench/model-backups", { method: "POST", body: json({ ...body, confirm: true }) }),
+  restoreModels: (body: { connection: string; artifact_id: string; version?: string; target_path?: string }) =>
+    request<Job>("/_kui/api/workbench/model-backups/restore", {
+      method: "POST", body: json({ ...body, confirm: true }),
+    }),
   storageConnections: () => request<{ connections: StorageConnection[] }>("/_kui/api/workbench/storage"),
   saveStorageConnection: (connection: Partial<StorageConnection> & { name: string; kind: StorageConnection["kind"] }) =>
     request<StorageConnection>("/_kui/api/workbench/storage", { method: "POST", body: json(connection) }),

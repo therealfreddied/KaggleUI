@@ -1,4 +1,4 @@
-import { Boxes, CornerDownLeft, Download, Gauge, HardDrive, KeyRound, LayoutGrid, ListChecks, LogOut, Menu, MessageSquare, Moon, Plus, Search, Server, Sun, Wand2, X } from "lucide-react";
+import { GitBranch, Boxes, CornerDownLeft, Download, Gauge, HardDrive, KeyRound, LayoutGrid, ListChecks, LogOut, Menu, MessageSquare, Moon, Plus, Search, Server, Sun, Wand2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
@@ -16,6 +16,7 @@ const NAV = [
   { to: "/models", label: "Models", icon: Boxes },
   { to: "/imports", label: "Imports", icon: Download },
   { to: "/storage", label: "Storage", icon: HardDrive },
+  { to: "/workspace", label: "Workspace", icon: GitBranch },
   { to: "/deployments", label: "Deployments", icon: Server },
   { to: "/studio", label: "Studio", icon: MessageSquare },
   { to: "/access", label: "Access & API", icon: KeyRound },
@@ -304,7 +305,7 @@ export function Shell({ children }: { children: ReactNode }) {
       <footer className="app-footer">
         <span className="font-mono">KaggleUI {__APP_VERSION__}</span>
         {overview?.mock && <span className="text-tight">Demo engines: nothing runs on a GPU</span>}
-        <a href="https://github.com/UltraFEmotes/KaggleUI" target="_blank" rel="noreferrer">
+        <a href="https://github.com/therealfreddied/KaggleUI" target="_blank" rel="noreferrer">
           Source & help ↗
         </a>
         <button type="button" className="sm:hidden" onClick={() => api.logout().then(() => window.location.assign("/login"))}>

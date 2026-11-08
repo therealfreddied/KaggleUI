@@ -331,6 +331,13 @@ class DeploymentManager:
             self.deployments.pop(dep_id, None)
             self.state.bus.publish("deployment_removed", {"id": dep_id})
 
+    def reload_definitions(self) -> None:
+        """Re-read saved definitions without touching running/installing deployments."""
+        for dep_id, dep in list(self.deployments.items()):
+            if dep.status not in ACTIVE:
+                self.deployments.pop(dep_id, None)
+        self.restore()
+
     def restore(self) -> None:
         """Re-register durable deployments as cold/stopped so their names resolve after a restart."""
         for record in self.state.workbench.deployment_records():

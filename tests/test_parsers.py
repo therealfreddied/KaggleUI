@@ -141,3 +141,15 @@ def test_ollama_effective_param_sizes():
 
     it = CatalogService(lambda: None)._from_ollama({"name": "gemma4", "sizes": ["e4b", "12b"], "downloads": 1})
     assert [v["params"] for v in it["variants"]] == [4e9, 12e9]
+
+
+def test_attached_gguf_reports_metadata_context(tmp_path):
+    from test_gguf import STRING, UINT32, _gguf
+
+    (tmp_path / "qwen.gguf").write_bytes(_gguf({
+        "general.architecture": (STRING, "qwen3"),
+        "qwen3.context_length": (UINT32, 131072),
+    }))
+    found = scan(tmp_path)
+    assert len(found) == 1
+    assert found[0]["context_length"] == 131072

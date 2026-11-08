@@ -20,7 +20,7 @@ import psutil
 from .. import __version__
 from ..schemas import Preset
 
-REPO = "UltraFEmotes/KaggleUI"
+REPO = "therealfreddied/KaggleUI"
 POLICY_URL = f"https://raw.githubusercontent.com/{REPO}/main/release-policy.json"
 RELEASE_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 

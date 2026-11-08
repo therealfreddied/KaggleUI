@@ -22,12 +22,14 @@ export interface ModelChoice {
 /** Settings that change a model's size or fit, re-checked by the server as they change. */
 const FIT_OPTIONS = ["ctx", "offload", "quantize", "weights"];
 
-const CTX = [2048, 4096, 8192, 16384, 32768, 65536];
+const CTX = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576];
 
-/** Selector options: the standard steps up to this model's window, then the window itself. */
-function ctxOptions(max?: number | null): number[] {
-  if (!max) return CTX;
-  return [...CTX.filter((c) => c < max), max];
+/** Selector options: standard steps up to this model's window, then the window itself. */
+function ctxOptions(max?: number | null, current?: number): number[] {
+  const values = max ? CTX.filter((c) => c < max) : [...CTX];
+  if (max) values.push(max);
+  if (current && (!max || current <= max) && !values.includes(current)) values.push(current);
+  return [...new Set(values)].sort((a, b) => a - b);
 }
 
 /** Engine options shown per modality. Values are merged into spec.options. */
@@ -43,7 +45,9 @@ function EngineOptions({
   const set = (k: string, v: unknown) => onChange({ ...options, [k]: v === "" ? undefined : v });
   const m = item.modality;
   if (m === "text") {
+    const current = typeof options.ctx === "number" ? options.ctx : undefined;
     const fallback = Math.min(8192, item.context_length ?? 8192);
+    const ladder = ctxOptions(item.context_length, current);
     return (
       <div className="grid gap-3 sm:grid-cols-2">
         <Field
@@ -51,11 +55,11 @@ function EngineOptions({
           hint={
             item.context_length
               ? `This model supports up to ${tokens(item.context_length)} tokens. Longer context uses more VRAM for the KV cache.`
-              : "Longer context uses more VRAM for the KV cache."
+              : "Context limit is not published for this model. Pick the window you need; longer context uses more VRAM for the KV cache."
           }
         >
-          <Select value={String(options.ctx ?? fallback)} onChange={(e) => set("ctx", Number(e.target.value))}>
-            {ctxOptions(item.context_length).map((c) => (
+          <Select value={String(ladder.includes(current ?? fallback) ? current ?? fallback : fallback)} onChange={(e) => set("ctx", Number(e.target.value))}>
+            {ladder.map((c) => (
               <option key={c} value={c}>
                 {c.toLocaleString()} tokens
               </option>
@@ -283,6 +287,9 @@ export function ModelDetail({
             {item.brand && <span>{item.brand.label}</span>}
             {item.params ? <span>{params(item.params)} params</span> : null}
             {item.context_length ? <span>{tokens(item.context_length)} context</span> : null}
+            {item.max_output_tokens && item.max_output_tokens !== item.context_length ? (
+              <span>{tokens(item.max_output_tokens)} max output</span>
+            ) : null}
             {item.engine_label && <span>{item.engine_label}</span>}
             {item.url && (
               <a href={item.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-fg-2 hover:text-signal">
@@ -290,6 +297,17 @@ export function ModelDetail({
               </a>
             )}
           </div>
+          {item.models_dev && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px] text-fg-3">
+              {item.models_dev.family && <span>{item.models_dev.family} family</span>}
+              {item.models_dev.knowledge && <span>Knowledge {item.models_dev.knowledge}</span>}
+              {item.models_dev.release_date && <span>Released {item.models_dev.release_date}</span>}
+              {item.models_dev.attachment && <span>Accepts file inputs</span>}
+              {item.models_dev.reasoning && !item.reasoning?.supported && <span>Reasoning</span>}
+              {item.models_dev.tool_call && !item.capabilities.includes("tools") && <span>Tool calls</span>}
+              <span>Facts from models.dev</span>
+            </div>
+          )}
           {item.description && <p className="mt-3 text-[14px] text-fg-2">{item.description}</p>}
           {item.capabilities.length > 0 && <div className="mt-4"><CapabilityTags capabilities={item.capabilities} /></div>}
           {item.reasoning?.supported && <p className="mt-2 text-[12px] text-fg-3">Reasoning: {item.reasoning.efforts.length ? ["Auto", ...item.reasoning.efforts.map(effortLabel)].join(" · ") : "Model default"}. {item.reasoning.source === "family" ? "Estimated from the model family; verified by the runner when loaded." : "Detected from model metadata or its chat template."}</p>}

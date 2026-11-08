@@ -34,6 +34,8 @@ def main(argv: list[str] | None = None) -> None:
     st.add_argument("--modalities", default="text,image,video,tts,stt,world")
     st.add_argument("--out", default="selftest.json")
     st.add_argument("--host", action="store_true", help="Print the detected host and exit")
+    kp = sub.add_parser("kui", help="Local lifecycle client (profiles, CLI commands, TUI)")
+    kp.add_argument("args", nargs=argparse.REMAINDER)
     bp = sub.add_parser("bench", help="Measure TTFT and tokens/s of a serving deployment")
     _common(bp)
     bp.add_argument("--model", required=True, help="Served name, deployment id, or model id")
@@ -89,6 +91,11 @@ def main(argv: list[str] | None = None) -> None:
         for label, path in written.items():
             print(f"{label}: {path}", flush=True)
         return
+
+    if args.cmd == "kui":
+        from .kui.cli import main as kui_main
+
+        raise SystemExit(kui_main(args.args))
 
     from .server.run import build_state, serve
 

@@ -26,15 +26,17 @@ from ..schemas import MODALITIES, DeploymentSpec, Preset, SettingsPatch
 from ..secretstore import secret_status
 from ..tunnels.manager import PROVIDER_LABELS
 from ..tunnels.persistent import PersistentProcess, take_handoff
+from ..workbench import sync as workspace_sync
 from .auth import ACCESS_COOKIE, ADMIN_COOKIE
 from .proxy import proxy_http, proxy_ws
 from .state import AppState
 from .studio import studio_ws
 from .workbench_api import router as workbench_router
+from .workspace_api import router as workspace_router
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 RESERVED = ("/v1/", "/api/", "/_kui/", "/gradio/")
-INSTALL_LINE = "!curl -fsSL https://raw.githubusercontent.com/UltraFEmotes/KaggleUI/main/install.sh | bash"
+INSTALL_LINE = "!curl -fsSL https://raw.githubusercontent.com/therealfreddied/KaggleUI/main/install.sh | bash"
 
 
 def create_app(state: AppState) -> FastAPI:
@@ -50,6 +52,8 @@ def create_app(state: AppState) -> FastAPI:
             for t in tasks:
                 t.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+            if state.auto_backup_task is not None:
+                state.auto_backup_task.cancel()
             await state.residency.stop()
             await state.imports.close()
             await state.manager.shutdown()
@@ -101,6 +105,7 @@ def create_app(state: AppState) -> FastAPI:
     app.include_router(anthropic_gw.router)
     app.include_router(ollama_gw.router)
     app.include_router(workbench_router)
+    app.include_router(workspace_router)
 
     # =========================================================================================
     # Session / auth
@@ -210,7 +215,7 @@ def create_app(state: AppState) -> FastAPI:
         require_admin(request)
         before = state.settings.exposure.provider
         data = state.settings.model_dump()
-        for section in ("access", "api", "exposure", "storage", "optimize", "cache", "ml"):
+        for section in ("access", "api", "exposure", "storage", "optimize", "cache", "ml", "workspace"):
             changes = getattr(patch, section)
             if changes:
                 data[section].update(changes)
@@ -222,7 +227,9 @@ def create_app(state: AppState) -> FastAPI:
             raise HTTPException(422, str(e)) from e
         if state.settings.exposure.provider != before:
             asyncio.create_task(_open_main_tunnel(state))
+        state.workbench.save_settings(state.settings.model_dump())
         state.bus.publish("settings", state.settings.model_dump())
+        workspace_sync.schedule_auto_backup(state)
         return state.settings.model_dump()
 
     @app.post("/_kui/api/credentials/regenerate")
@@ -423,6 +430,7 @@ def create_app(state: AppState) -> FastAPI:
         if state.updates.blocked:
             raise HTTPException(426, state.updates.status()["message"])
         dep = state.manager.create(spec)
+        workspace_sync.schedule_auto_backup(state)
         return dep.public()
 
     @app.delete("/_kui/api/deployments/{dep_id}")
@@ -431,6 +439,7 @@ def create_app(state: AppState) -> FastAPI:
         if not state.manager.get(dep_id):
             raise HTTPException(404, "No such deployment")
         await state.manager.stop(dep_id)
+        workspace_sync.schedule_auto_backup(state)
         return {"ok": True}
 
     @app.post("/_kui/api/deployments/{dep_id}/restart")
@@ -707,9 +716,17 @@ async def _startup(state: AppState) -> None:
             asyncio.create_task(announce())
 
     state.tunnels.on_change = on_tunnel
+    if not state.updates.blocked:
+        await workspace_sync.restore_on_launch(state)
     if state.preset and not state.updates.blocked:
         for spec in state.preset.deployments:
             state.manager.create(spec)
+        workspace_sync.schedule_auto_backup(state)
+    if not state.updates.blocked:
+        try:
+            await workspace_sync.publish_discovery(state)
+        except Exception as exc:  # Discovery is optional and must never block the link.
+            state.bus.publish("workspace", {"action": "discovery_failed", "error": str(exc)})
     if ready:
         print(notify.card_text(state.main_url(), state.auth.admin_token,
                               state.auth.password if state.settings.access.password_enabled else None,

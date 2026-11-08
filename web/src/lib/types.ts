@@ -55,6 +55,128 @@ export interface Settings {
   storage: StorageSettings;
   optimize: OptimizationProfile;
   cache: CacheProfile;
+  ml: MLSettings;
+  workspace: WorkspaceSettings;
+}
+
+export interface MLSettings {
+  teacher_remote: boolean;
+  max_teacher_tokens: number;
+}
+
+/** GitHub workspace sync. The token is a secret *name*, never the value. */
+export interface WorkspaceSettings {
+  enabled: boolean;
+  repo: string;
+  branch: string;
+  path: string;
+  token_secret: string;
+  restore_on_launch: boolean;
+  auto_backup: boolean;
+  auto_start_set: boolean;
+  publish_discovery: boolean;
+}
+
+export interface WorkspaceMeta {
+  schema_version: number;
+  workspace_id: string;
+  name: string;
+  app_version: string;
+  exported_at: number;
+  source_host: string | null;
+}
+
+export interface SecretRequirement {
+  name: string;
+  reason: string;
+  required: boolean;
+}
+
+export interface WorkspaceArtifactRef {
+  artifact_id: string;
+  version: string;
+  kind: string;
+  files: number;
+  size: number;
+}
+
+/** Portable configuration only; runtime state (pids, ports, GPU claims) is rebuilt locally. */
+export interface WorkspaceDocument {
+  meta: WorkspaceMeta;
+  settings: Settings;
+  deployments: DeploymentSpec[];
+  deployment_sets: DeploymentSet[];
+  active_set: string | null;
+  storage_connections: StorageConnection[];
+  artifacts: WorkspaceArtifactRef[];
+  secret_requirements: SecretRequirement[];
+}
+
+export interface WorkspaceStatus {
+  configured: boolean;
+  repo: string;
+  branch: string;
+  path: string;
+  token_secret: string;
+  token_set: boolean;
+  workspace_id: string;
+  name: string;
+  local_hash: string;
+  local_changed: boolean;
+  remote_sha: string | null;
+  remote_available: boolean;
+  remote_changed: boolean;
+  conflict: boolean;
+  remote_workspace_id?: string;
+  remote_name?: string;
+  last_backup_at: number | null;
+  last_restore_at: number | null;
+  error: string | null;
+}
+
+export interface ManagementToken {
+  id: string;
+  label: string;
+  prefix: string;
+  scopes: string[];
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+
+export interface InstanceInfo {
+  instance_id: string;
+  workspace_id: string;
+  workspace_name: string;
+  version: string;
+  started_at: number;
+  url: string;
+  host: string;
+  mock: boolean;
+  fake_hw: string | null;
+  deployments: Deployment[];
+  jobs: Job[];
+  uptime_s: number;
+}
+
+export interface WorkspaceDiff {
+  meta: { local: string; incoming: string };
+  settings: string[];
+  deployments: { added: string[]; removed: string[]; changed: string[] };
+  deployment_sets: { added: string[]; removed: string[]; changed: string[] };
+  storage_connections: { added: string[]; removed: string[]; changed: string[] };
+  artifacts: { incoming: number; local: number };
+  secret_requirements: SecretRequirement[];
+  warnings: string[];
+  auto_start_set: boolean;
+}
+
+export interface WorkspacePreview {
+  exists: boolean;
+  sha?: string | null;
+  incoming?: WorkspaceDocument;
+  diff?: WorkspaceDiff;
+  document_hash?: string;
 }
 
 export interface StorageSettings {
@@ -405,6 +527,24 @@ export interface CatalogItem {
   library?: string | null;
   files?: number;
   context_length?: number | null;
+  /** Published output cap; not the context window. */
+  max_output_tokens?: number | null;
+  /** Extra facts joined from models.dev when the model's own metadata has no value. */
+  models_dev?: {
+    id?: string;
+    name?: string;
+    family?: string;
+    knowledge?: string;
+    release_date?: string;
+    last_updated?: string;
+    attachment?: boolean;
+    reasoning?: boolean;
+    tool_call?: boolean;
+    open_weights?: boolean;
+    context?: number;
+    output?: number;
+    modalities?: { input?: string[]; output?: string[] };
+  };
 }
 
 export interface SearchResult {

@@ -18,7 +18,7 @@ from ..util import parse_size
 SITE = "https://ollama.com"
 REGISTRY = "https://registry.ollama.ai/v2"
 SNAPSHOT = Path(__file__).with_name("ollama_snapshot.json")
-HEADERS = {"User-Agent": "Mozilla/5.0 (kaggleui; +https://github.com/UltraFEmotes/KaggleUI)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (kaggleui; +https://github.com/therealfreddied/KaggleUI)"}
 
 _LI_RE = re.compile(r"<li\s+class=\"border-b[\s\S]*?</li>")
 _NAME_RE = re.compile(r'href="/library/([^"]+)"')

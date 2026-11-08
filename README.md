@@ -1,12 +1,14 @@
 # KaggleUI
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/UltraFEmotes/KaggleUI/blob/main/notebooks/colab.ipynb)
-[![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/kernels/welcome?src=https://raw.githubusercontent.com/UltraFEmotes/KaggleUI/main/notebooks/KaggleUI.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/therealfreddied/KaggleUI/blob/main/notebooks/colab.ipynb)
+[![Open In Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://www.kaggle.com/kernels/welcome?src=https://raw.githubusercontent.com/therealfreddied/KaggleUI/main/notebooks/KaggleUI.ipynb)
 
 One notebook cell turns a free Kaggle GPU into a model host. Run it, open the link on your own computer, and pick what to serve from a web control panel:
 
+**Full feature guide → [docs/features.md](docs/features.md)**
+
 - **Model categories:** Text (LLMs), Image, Video, Text-to-speech, Audio generation, Speech-to-text, World models and 3D models. Runner availability is shown separately from catalog discovery.
-- **Live catalog** from Hugging Face and Ollama, plus models attached under `/kaggle/input`. Every model is sized against *this* machine's VRAM, RAM and disk and tagged **Best fit**, **Fits**, **Tight** or **Won't fit**, with the reason. Toggle between **All models** and **Fits this GPU**, sort by **Lowest parameters** or **Highest parameters**, and use **Load more** to browse deeper. Parameter sorting uses the shown variant; unknown counts appear last.
+- **Live catalog** from Hugging Face and Ollama, plus models attached under `/kaggle/input`. Every model is sized against *this* machine's VRAM, RAM and disk and tagged **Best fit**, **Fits**, **Tight** or **Won't fit**, with the reason. The list opens on **Fits this machine** (toggle to **All models** to see everything), sorts by **Lowest parameters** or **Highest parameters**, and uses **Load more** to browse deeper. Parameter sorting uses the shown variant; unknown counts appear last.
 - **Correct context windows:** each text model shows its true maximum context length — read from model configs and GGUF metadata, with RoPE extensions applied — right in the catalog list, with a **Context window** filter (≥ 8K … ≥ 1M) to narrow the list, and the context-length picker offers values up to that maximum (131K for Llama 3.x, 256K for Qwen3, 1.01M for Qwen2.5-1M, and so on). In the Studio, each deployment's **Max tokens** slider runs up to the context you launched it with.
 - **Interfaces:** the built-in Studio, Gradio, Open WebUI (text) or ComfyUI (image/video).
 - **Password lock** for the interfaces (generated, toggleable). The control panel always needs your admin token.
@@ -82,7 +84,7 @@ These new audio adapters are **experimental and have not been verified with real
 3. Paste this into a cell and run it:
 
    ```python
-   !curl -fsSL https://raw.githubusercontent.com/UltraFEmotes/KaggleUI/main/install.sh | bash
+   !curl -fsSL https://raw.githubusercontent.com/therealfreddied/KaggleUI/main/install.sh | bash
    import kaggleui
    kaggleui.launch()
    ```
@@ -256,6 +258,43 @@ Durable artifacts (datasets, LoRA adapters, merged models, GGUF exports, eval re
 | GitHub | Contents API | Text/catalog files only, 1 MiB per file maximum |
 
 Read-only connections are refused for uploads. Restore-on-boot is opt-in per connection.
+
+### Back up and restore model files
+
+Weights can be copied once to any rclone, Hugging Face or GitHub destination and restored later instead of re-downloading from the Hub. The workspace page lists the manifests already present on a destination, so a fresh instance can discover backups without local records.
+
+```bash
+kui models backup --connection r2 --deployment <id> --confirm --wait
+kui models remote --connection r2
+kui models restore --connection r2 --artifact-id <id> --version <version> --confirm --wait
+```
+
+Only individual files are copied (`rclone copyto`), never a destructive sync. A downloaded file is checked against the size and SHA-256 in the manifest before it is registered locally.
+
+## Workspace sync
+
+The workspace document is portable configuration, not a session snapshot: dashboard preferences, deployment definitions and sets, storage connections, artifact references and secret *requirements*. Pids, ports, GPU claims and tunnel URLs are never included.
+
+- **GitHub sync** writes a versioned document to a repository you own. Conflicts are reported, not overwritten; `force` is explicit.
+- **Restore on launch** fetches, validates and previews the document, writes a local backup, applies it and optionally starts the active deployment set. Deployments are reconstructed from definitions; this is not a notebook session resume.
+- **Auto-backup** is debounced: settings, deployment and storage changes publish one commit after they settle. A failed GitHub call is reported in the event stream and never breaks the local change.
+- Credentials stay references by name (`GITHUB_TOKEN`, `HF_TOKEN`, …); values are never written to the repository or returned to the browser.
+
+## CLI and TUI
+
+`kui` drives a local instance or a Kaggle notebook through scoped management keys:
+
+```bash
+kui status --url http://127.0.0.1:8890 --token <management-key>
+kui deployments list
+kui jobs log <job-id>
+kui models remote --connection r2
+kui workspace backup --confirm
+kui shutdown --confirm
+kui tui
+```
+
+Profiles are local references — instance URL, notebook slug, credential secret name — not Kaggle accounts. The Kaggle CLI has no stop operation, so `kui notebook stop` can only stop the KaggleUI server; it reports that distinction and exits non-zero when asked to end the notebook itself.
 
 ## Model Studio workflow
 

@@ -17,7 +17,7 @@ import yaml
 from ..capabilities import context_length, profile
 from ..system.probe import HardwareProfile
 from ..util import parse_params
-from . import attached, brands, hf, ollama, world
+from . import attached, brands, hf, models_dev, ollama, world
 from .categories import MESH_ENTRIES, audio_category
 from .filters import CatalogFilters
 from .fit import Candidate, Fit, assess, gguf_size, pick_quant, rank, weights_from_safetensors
@@ -27,6 +27,8 @@ CURATED_PATH = Path(__file__).with_name("curated.yaml")
 VERDICT_ORDER = {"best": 0, "good": 1, "tight": 2, "worst": 3}
 VARIANT_WORDS = ("mini", "vl", "vision", "multimodal", "coder", "math", "audio", "omni", "flash", "base", "pt")
 ENRICH_BUDGET = 1.2  # seconds a search waits for exact sizes before answering with what it has
+MODELS_DEV_SEARCH_BUDGET = 1.5  # first use downloads the document; the fetch keeps running in the background
+MODELS_DEV_DETAIL_BUDGET = 5.0
 DIFFUSERS_ENGINES = ("diffusers", "diffusers_video", "diffusers_world")
 LEGACY_KOKORO_NOTE = "Old Kokoro v0.19 weights. The kokoro library loads v1.0: use hexgrad/Kokoro-82M."
 SINGLE_FILE_NOTE = ("Single-file or original-format checkpoint (ComfyUI style), not a diffusers pipeline. "
@@ -157,6 +159,7 @@ class CatalogService:
         enriching = False
         if live:
             enriching = await self._enrich(all_items)
+            await self._apply_models_dev(all_items)
         fits = [self._apply_fit(it, hw) for it in all_items]
         rank(fits)
         for it, f in zip(all_items, fits):
@@ -548,7 +551,34 @@ class CatalogService:
         tags = await self._cached(f"ollama-tags:{it['id']}", 3600, fetch)
         windows = [w for w in (ollama.parse_context(t.get("context")) for t in tags) if w]
         if windows:
-            it["context_length"] = max(windows)
+            # A curated entry may already know a larger window; never lower it.
+            it["context_length"] = max([it.get("context_length") or 0, *windows])
+
+    async def _models_dev_index(self, budget: float = MODELS_DEV_DETAIL_BUDGET) -> dict | None:
+        try:
+            return await asyncio.wait_for(self._models_dev(), budget)
+        except asyncio.TimeoutError:
+            return None
+
+    async def _models_dev(self) -> dict:
+        return await self._cached(models_dev.CACHE_KEY, models_dev.CACHE_TTL,
+                                  lambda: models_dev.fetch(self.client))
+
+    async def _apply_models_dev(self, items: list[dict]) -> None:
+        """Fill missing text-model limits/facts; never overrides the model's own metadata."""
+        wanted = [it for it in items if it.get("modality") == "text" and it.get("source") in ("hf", "ollama")]
+        if not wanted:
+            return
+        index = await self._models_dev_index(MODELS_DEV_SEARCH_BUDGET)
+        if not index:
+            return
+        for it in wanted:
+            if it["source"] == "ollama":
+                ref = f"{it['id']}:{it.get('variant') or 'latest'}"
+                entry = models_dev.lookup(index, ref=ref, name=it.get("name"))
+            else:
+                entry = models_dev.lookup(index, repo=it["id"], name=it.get("name"))
+            models_dev.apply(it, entry)
 
     async def _ollama_variant_size(self, v: dict) -> None:
         name, tag = ollama.split_ref(v["ref"])
@@ -813,10 +843,14 @@ class CatalogService:
         it["variants"] = variants or it["variants"]
         windows = [v["context_length"] for v in it["variants"] if v.get("context_length")]
         if windows:
-            it["context_length"] = max(windows)
+            it["context_length"] = max([it.get("context_length") or 0, *windows])
         tag = it.get("variant") or next((v["id"] for v in it["variants"] if v["id"] != "latest"), "")
         it["abliterate_source"] = await self._hf_original(name, tag)
         it["abliterate_guessed"] = True
+        index = await self._models_dev_index()
+        if index:
+            models_dev.apply(it, models_dev.lookup(index, ref=f"{name}:{tag or 'latest'}",
+                                                   repo=name, name=it.get("name")))
         return self._finish_detail(it, hw)
 
     async def _hf_detail(self, repo: str, hw: HardwareProfile) -> dict:
@@ -894,6 +928,13 @@ class CatalogService:
                 ctx = context_length(data["config"])
                 if ctx and ctx > (it.get("context_length") or 0):
                     it["context_length"] = ctx
+        if modality == "text":
+            index = await self._models_dev_index()
+            if index:
+                weights = next((n["rfilename"] for n in sib if n["rfilename"].endswith(".safetensors")), None)
+                url = (f"https://huggingface.co/{repo}/resolve/{revision or 'main'}/{weights}"
+                       if weights else None)
+                models_dev.apply(it, models_dev.lookup(index, url=url, repo=repo, name=it.get("name")))
         return self._finish_detail(it, hw)
 
     def _finish_detail(self, it: dict, hw: HardwareProfile) -> dict:
@@ -915,7 +956,8 @@ class CatalogService:
                 "experimental": bool(model.get("experimental")), "curated": False, "attached": True,
                 "options": model.get("options", {}), "recipe": model.get("recipe"), "url": model.get("url"),
                 "min_sm": model.get("min_sm"), "min_vram": model.get("min_vram")}
-        item.update({key: model[key] for key in ("capabilities", "reasoning", "custom_code") if key in model})
+        item.update({key: model[key] for key in ("capabilities", "reasoning", "custom_code", "context_length")
+                     if model.get(key) is not None})
         return self._finish_detail(item, self.probe())
 
     def selftest_specs(self) -> list[dict]:

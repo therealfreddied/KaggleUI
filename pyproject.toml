@@ -34,10 +34,11 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23", "ruff>=0.5", "openai>=1.40", "anthro
 
 [project.scripts]
 kaggleui = "kaggleui.cli:main"
+kui = "kaggleui.kui.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/UltraFEmotes/KaggleUI"
-Issues = "https://github.com/UltraFEmotes/KaggleUI/issues"
+Homepage = "https://github.com/therealfreddied/KaggleUI"
+Issues = "https://github.com/therealfreddied/KaggleUI/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["kaggleui"]

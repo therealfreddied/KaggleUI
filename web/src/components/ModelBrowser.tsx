@@ -202,9 +202,9 @@ const PAGE = 40;
 
 function storedFit(): FitFilter {
   try {
-    return localStorage.getItem(FIT_KEY) === "fits" ? "fits" : "all";
+    return localStorage.getItem(FIT_KEY) === "all" ? "all" : "fits";
   } catch {
-    return "all";
+    return "fits";
   }
 }
 
@@ -250,6 +250,7 @@ export function ModelBrowser({
   const [q, setQ] = useState("");
   const [source, setSource] = useState(initialSource);
   const broaderCatalog = ["world", "mesh", "audio"].includes(modality);
+  const defaultFit: FitFilter = broaderCatalog || initialSource === "attached" ? "all" : "fits";
   const [generalFit, setGeneralFit] = useState<FitFilter>(() => initialSource === "attached" ? "all" : storedFit());
   const [discoveryFits, setDiscoveryFits] = useState<Partial<Record<Modality, FitFilter>>>({});
   const fitFilter = broaderCatalog ? discoveryFits[modality] ?? "all" : generalFit;
@@ -305,7 +306,7 @@ export function ModelBrowser({
     setSource("all");
     setUnsupported(false);
     setLaunchableOnly(false);
-    changeFit("all");
+    changeFit(defaultFit);
     changeSort(null);
     setFilters(emptyFilters());
   }
@@ -427,7 +428,7 @@ export function ModelBrowser({
         <span>
           {statusText}
         </span>
-        {(q || chips.length > 0 || source !== "all" || (broaderCatalog ? launchableOnly : unsupported) || fitFilter !== "all" || sortChoice) && (
+        {(q || chips.length > 0 || source !== "all" || (broaderCatalog ? launchableOnly : unsupported) || fitFilter !== defaultFit || sortChoice) && (
           <button type="button" onClick={resetFilters} className="flex items-center gap-1 text-fg-2 hover:text-fg"><X className="size-3" /> Reset filters</button>
         )}
       </div>
@@ -461,9 +462,16 @@ export function ModelBrowser({
       ) : query.error ? (
         <Empty title="Couldn't load models">{String((query.error as Error).message)}</Empty>
       ) : query.data && query.data.items.length === 0 ? (
-        <Empty title={searching || query.data?.pending ? "Searching live catalogs…" : chips.length ? "No models match these filters" : "Nothing found"}>
-          {chips.length ? "Remove a filter or adjust the range. When available, Load more expands discovery. Capability filters use detected tags; unknown counts are excluded from ranges unless included." : "Try another search, or switch the source filter."}
-        </Empty>
+        fitFilter === "fits" && !searching && !query.data.pending && chips.length === 0 && !q ? (
+          <Empty title="Nothing fits this machine">
+            <p>Every catalog result needs more memory than this machine has. Narrow the catalog with source, capability or context filters, or browse everything and read each fit verdict.</p>
+            <Button size="sm" className="mt-3" onClick={() => changeFit("all")}>Show all models</Button>
+          </Empty>
+        ) : (
+          <Empty title={searching || query.data?.pending ? "Searching live catalogs…" : chips.length ? "No models match these filters" : "Nothing found"}>
+            {chips.length ? "Remove a filter or adjust the range. When available, Load more expands discovery. Capability filters use detected tags; unknown counts are excluded from ranges unless included." : "Try another search, or switch the source filter."}
+          </Empty>
+        )
       ) : (
         <div className={cx(view === "grid" ? "grid gap-3 @xl:grid-cols-2 @5xl:grid-cols-3" : "panel overflow-hidden", searching && "opacity-60")} aria-busy={searching}>
           {view === "list" && (

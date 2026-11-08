@@ -68,6 +68,31 @@ class WorkbenchStore:
     def deployments_file(self) -> Path:
         return self.root / "deployments.json"
 
+    @property
+    def settings_file(self) -> Path:
+        return self.root / "settings.json"
+
+    @property
+    def workspace_file(self) -> Path:
+        return self.root / "workspace.json"
+
+    # -- portable settings --------------------------------------------------------------------
+    def load_settings(self) -> dict[str, Any] | None:
+        """Last saved ``Settings``, or ``None`` when this install has never persisted one."""
+        data = _read(self.settings_file, {})
+        settings = data.get("settings")
+        return settings if isinstance(settings, dict) else None
+
+    def save_settings(self, settings: dict[str, Any]) -> None:
+        _write(self.settings_file, {"schema_version": SCHEMA_VERSION, "settings": settings})
+
+    def workspace_state(self) -> dict[str, Any]:
+        return _read(self.workspace_file, {"schema_version": SCHEMA_VERSION})
+
+    def save_workspace_state(self, state: dict[str, Any]) -> None:
+        payload = {"schema_version": SCHEMA_VERSION, **state}
+        _write(self.workspace_file, payload)
+
     def load(self) -> None:
         sets = _read(self.sets_file, {"schema_version": SCHEMA_VERSION, "sets": []})
         self.active_set = sets.get("active_set")

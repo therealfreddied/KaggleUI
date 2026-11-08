@@ -11,7 +11,7 @@ from kaggleui import hosts
 from kaggleui.config import ON_COLAB, ON_KAGGLE
 
 ROOT = Path(__file__).resolve().parent.parent
-INSTALL = "https://raw.githubusercontent.com/UltraFEmotes/KaggleUI/main/install.sh"
+INSTALL = "https://raw.githubusercontent.com/therealfreddied/KaggleUI/main/install.sh"
 
 def test_detect_prefers_kaggle(monkeypatch):
     monkeypatch.setattr(hosts, "ON_KAGGLE", True)

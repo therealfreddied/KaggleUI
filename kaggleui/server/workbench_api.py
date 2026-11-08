@@ -22,6 +22,7 @@ from ..workbench import placement as place
 from ..workbench.jobs import read_log
 from ..workbench.registry import RegistryError
 from ..workbench.runner import start_in_background, start_local
+from ..workbench.sync import schedule_auto_backup
 
 router = APIRouter(prefix="/_kui/api", tags=["workbench"])
 
@@ -98,29 +99,32 @@ def list_sets(request: Request):
 
 
 @router.post("/workbench/deployment-sets")
-def put_set(request: Request, body: dict[str, Any]):
+async def put_set(request: Request, body: dict[str, Any]):
     st = _admin(request)
     try:
         deployment_set = DeploymentSet.model_validate(body)
     except ValidationError as exc:
         raise HTTPException(422, exc.errors()[0]["msg"]) from exc
     saved = st.workbench.put_deployment_set(deployment_set)
+    schedule_auto_backup(st)
     return saved.model_dump()
 
 
 @router.delete("/workbench/deployment-sets/{set_id}")
-def delete_set(request: Request, set_id: str):
+async def delete_set(request: Request, set_id: str):
     st = _admin(request)
     st.workbench.delete_deployment_set(set_id)
+    schedule_auto_backup(st)
     return {"ok": True}
 
 
 @router.post("/workbench/deployment-sets/{set_id}/activate")
-def activate_set(request: Request, set_id: str):
+async def activate_set(request: Request, set_id: str):
     st = _admin(request)
     if st.workbench.deployment_set(set_id) is None:
         raise HTTPException(404, "No such deployment set")
     st.workbench.mark_active(set_id)
+    schedule_auto_backup(st)
     return {"active": set_id}
 
 
@@ -218,7 +222,7 @@ def list_storage(request: Request):
 
 
 @router.post("/workbench/storage")
-def save_storage(request: Request, body: dict[str, Any]):
+async def save_storage(request: Request, body: dict[str, Any]):
     st = _admin(request)
     try:
         connection = StorageConnection.model_validate(body)
@@ -226,16 +230,19 @@ def save_storage(request: Request, body: dict[str, Any]):
         raise HTTPException(422, exc.errors()[0]["msg"]) from exc
     if connection.kind == "local" and not connection.config.get("root"):
         raise HTTPException(422, "local connections need config.root")
-    return redact(st.storage.save(connection))
+    saved = st.storage.save(connection)
+    schedule_auto_backup(st)
+    return redact(saved)
 
 
 @router.delete("/workbench/storage/{name}")
-def delete_storage(request: Request, name: str):
+async def delete_storage(request: Request, name: str):
     st = _admin(request)
     try:
         st.storage.delete(name, st.artifacts.list())
     except StorageError as exc:
         raise HTTPException(409, str(exc)) from exc
+    schedule_auto_backup(st)
     return {"ok": True}
 
 

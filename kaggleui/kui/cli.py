@@ -199,7 +199,7 @@ def cmd_status(args, store: ProfileStore) -> int:
     print(f"workspace {info.get('workspace_id')} ({info.get('workspace_name')})  "
           f"instance {info.get('instance_id')}  host {info.get('host')}")
     print(f"deployments {len(info.get('deployments') or [])}  uptime {int(info.get('uptime_s') or 0)}s")
-    for line in _table(info.get("deployments") or [], [("id", "ID"), ("served_name", "NAME"),
+    for line in _table(info.get("deployments") or [], [("id", "ID"), ("name", "NAME"),
                                                        ("modality", "MODALITY"), ("status", "STATUS")]):
         print(line)
     return 0
@@ -211,7 +211,7 @@ def cmd_deployments(args, store: ProfileStore) -> int:
         if args.json:
             _print(args, rows)
             return 0
-        for line in _table(rows, [("id", "ID"), ("served_name", "NAME"), ("modality", "MODALITY"),
+        for line in _table(rows, [("id", "ID"), ("name", "NAME"), ("modality", "MODALITY"),
                                   ("status", "STATUS"), ("message", "MESSAGE")]):
             print(line)
         return 0

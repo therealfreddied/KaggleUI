@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from .common import SSE_HEADERS, GatewayError, anthropic_error, check_access, find, state_of, wrap
+from .reasoning import normalize_response, normalize_stream
 from .translate import anthropic_to_openai, openai_stream_to_anthropic, openai_to_anthropic
 
 router = APIRouter()
@@ -59,9 +60,10 @@ async def messages(request: Request):
         oai = anthropic_to_openai(body)
         optimize = state_of(request).optimize
         if body.get("stream"):
-            return StreamingResponse(openai_stream_to_anthropic(optimize.chat_stream(dep, oai), served),
+            stream = normalize_stream(optimize.chat_stream(dep, oai))
+            return StreamingResponse(openai_stream_to_anthropic(stream, served),
                                      media_type="text/event-stream", headers=SSE_HEADERS)
-        return openai_to_anthropic(await optimize.chat(dep, oai), served)
+        return openai_to_anthropic(normalize_response(await optimize.chat(dep, oai)), served)
     except Exception as e:  # noqa: BLE001
         return anthropic_error(wrap(e))
 

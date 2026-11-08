@@ -89,3 +89,36 @@ def test_llamacpp_pulls_ollama_refs_through_the_shared_server(paths, hw, monkeyp
     ctx = _ctx(paths, hw("t4x2"))
     assert asyncio.run(llamacpp.model_path(ctx, spec)) == blob
     assert pulled == ["qwen3:8b"]
+
+# --- BigMoeOnEdge: Linux-only, and only for a GGUF that declares experts ----------------------
+
+def test_bigmoe_refuses_other_platforms(paths, hw, monkeypatch):
+    from kaggleui.engines import bigmoe
+
+    monkeypatch.setattr(bigmoe.sys, "platform", "darwin")
+    with pytest.raises(DeployError, match="Linux builds only"):
+        asyncio.run(bigmoe.ensure_runtime(_ctx(paths, hw("t4x2"))))
+
+async def _ready(value):
+    return value
+
+
+def test_bigmoe_refuses_a_dense_gguf(paths, hw, monkeypatch, tmp_path):
+    from kaggleui.engines import bigmoe
+
+    fake = tmp_path / "dense.gguf"
+    fake.write_bytes(b"GGUF")
+    binary = tmp_path / "bmoe-server"
+    binary.write_bytes(b"")
+    monkeypatch.setattr(bigmoe, "ensure_runtime", lambda ctx: _ready(binary))
+    monkeypatch.setattr(bigmoe, "model_path", lambda ctx, spec: _ready(fake))
+    monkeypatch.setattr(bigmoe, "read_metadata", lambda path: {"general.architecture": "llama"})
+    with pytest.raises(DeployError, match="declares no experts"):
+        asyncio.run(bigmoe.deploy(_spec("bigmoe"), _ctx(paths, hw("t4x2"))))
+
+def test_bigmoe_release_pins_the_linux_tarballs():
+    from kaggleui.engines import bigmoe_release as rel
+
+    for arch, (name, sha, _glibc, _platforms) in rel.ASSETS.items():
+        assert name == f"bmoe-cli-{rel.BMOE_RELEASE}-linux-{arch}.tar.gz"
+        assert len(sha) == 64 and sha.isalnum()

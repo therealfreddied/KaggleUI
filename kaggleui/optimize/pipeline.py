@@ -43,12 +43,58 @@ class Optimizer:
         except (TypeError, ValueError):
             return None
 
+    def _apply_prompt(self, dep: Deployment, body: dict[str, Any], options: dict) -> dict[str, Any]:
+        """Insert or replace the system message from model options, else the global default."""
+        prompt = options.get("system_prompt") or self.profile.system_prompt
+        if not isinstance(prompt, str) or not prompt.strip():
+            return body
+        messages = list(body.get("messages") or [])
+        index = next((i for i, m in enumerate(messages)
+                      if isinstance(m, dict) and m.get("role") == "system"), None)
+        if index is None:
+            messages.insert(0, {"role": "system", "content": prompt})
+        elif options.get("system_prompt_mode") == "replace":
+            messages[index] = {**messages[index], "content": prompt}
+        else:
+            existing = str(messages[index].get("content") or "")
+            messages[index] = {**messages[index], "content": f"{prompt}\n\n{existing}".strip()}
+        return {**body, "messages": messages}
+
     def prepare(self, dep: Deployment, body: dict[str, Any]) -> dict[str, Any]:
         profile = self.profile
+        options = dep.spec.options or {}
         self.last_notes = []
+        out = self._apply_prompt(dep, body, options)
+        compress = options.get("compress") or []
+        if isinstance(compress, str):
+            compress = [compress]
+        messages = out.get("messages")
+        if isinstance(messages, list):
+            if "tools" in compress:
+                from .compress_tools import compress_messages
+
+                messages, cut = compress_messages(messages)
+                if cut:
+                    self._note(dep, f"compress: tools removed {cut} chars")
+            if "prose" in compress:
+                from .prose import compress_messages as compress_prose
+
+                messages, cut = compress_prose(messages)
+                if cut:
+                    self._note(dep, f"compress: prose removed {cut} chars")
+            if options.get("slim_harness"):
+                from .harness import strip_harness
+
+                removed = 0
+                for message in messages:
+                    if isinstance(message, dict) and message.get("role") == "system" \
+                            and isinstance(message.get("content"), str):
+                        message["content"], cut = strip_harness(message["content"])
+                        removed += cut
+                if removed:
+                    self._note(dep, f"harness: removed {removed} chars of static instructions")
         if not profile.enabled:
-            return body
-        out = body
+            return out
         if profile.max_prompt_tokens:
             ctx = self._ctx(dep)
             budget = profile.max_prompt_tokens
@@ -110,13 +156,16 @@ class Optimizer:
     async def chat(self, dep: Deployment, body: dict[str, Any]) -> dict[str, Any]:
         prepared = self.prepare(dep, body)
         cache = self.cache_profile
-        if cache.exact:
+        mode = self.cache_mode(dep)
+        exact = mode in ("exact", "semantic")
+        semantic = mode == "semantic"
+        if exact:
             hit = self.cache.lookup(dep, prepared, ttl_s=cache.exact_ttl_s)
             if hit is not None:
                 self._log(dep, "cache: exact hit")
                 return hit
         vector = None
-        if cache.semantic and semantic_eligible(prepared):
+        if semantic and semantic_eligible(prepared):
             vector = await self._embedding(self._prompt_text(prepared))
             if vector:
                 hit = self.cache.lookup_semantic(dep, vector, threshold=cache.semantic_threshold,
@@ -128,15 +177,24 @@ class Optimizer:
         started = time.perf_counter()
         response = await dep.backend.chat(prepared)
         response.setdefault("model", dep.served_name)
-        if cache.exact or vector:
+        if exact or vector:
             self.cache.store(dep, prepared, response, vector=vector)
         self._log(dep, f"chat: {time.perf_counter() - started:.2f}s, "
-                       f"cache={'on' if cache.exact or cache.semantic else 'off'}")
+                       f"cache={'on' if exact or semantic else 'off'}")
         return response
+
+    def cache_mode(self, dep: Deployment) -> str:
+        """``off`` | ``exact`` | ``semantic``; a model's own option wins over the global profile."""
+        value = (dep.spec.options or {}).get("cache")
+        if value in ("off", "exact", "semantic"):
+            return str(value)
+        if self.cache_profile.semantic:
+            return "semantic"
+        return "exact" if self.cache_profile.exact else "off"
 
     async def chat_stream(self, dep: Deployment, body: dict[str, Any]) -> AsyncIterator[dict]:
         self.prepare(dep, body)
-        if self.cache_profile.exact or self.cache_profile.semantic:
+        if self.cache_mode(dep) != "off":
             self._log(dep, STREAM_NOT_CACHED)
         assert dep.backend is not None
         async for chunk in dep.backend.chat_stream(body):

@@ -24,6 +24,13 @@ from .fit import Candidate, Fit, assess, gguf_size, pick_quant, rank, weights_fr
 from .resolve import ENGINE_LABELS, MODALITY_PIPELINES, resolve_hf
 
 CURATED_PATH = Path(__file__).with_name("curated.yaml")
+# Repo names that say "mixture of experts" outright; the engine also re-checks the GGUF's expert_count.
+_MOE_NAME = re.compile(r"(?:^|[-_/.])(?:moe|mixtral|gpt-?oss)(?:[-_/.]|$)|a\d+(?:\.\d+)?b(?:[-_/.]|$)",
+                       re.IGNORECASE)
+
+
+def _moe_name(repo_id: str) -> bool:
+    return bool(_MOE_NAME.search(repo_id))
 VERDICT_ORDER = {"best": 0, "good": 1, "tight": 2, "worst": 3}
 VARIANT_WORDS = ("mini", "vl", "vision", "multimodal", "coder", "math", "audio", "omni", "flash", "base", "pt")
 ENRICH_BUDGET = 1.2  # seconds a search waits for exact sizes before answering with what it has
@@ -272,6 +279,8 @@ class CatalogService:
             "min_vram": int(float(e["min_vram_gb"]) * 1e9) if e.get("min_vram_gb") else None,
             "largest": int(float(e["largest_gb"]) * 1e9) if e.get("largest_gb") else None,
             "capabilities": e.get("tags", []), "downloads": 0, "likes": 0, "updated": None,
+            "presets": [p for p in (e.get("presets") or []) if isinstance(p, dict) and p.get("name")],
+            "moe": bool(e.get("moe")) or _moe_name(str(e.get("id", ""))),
         }
         if e["source"] == "ollama":
             name, tag = ollama.split_ref(e["id"])
@@ -315,6 +324,7 @@ class CatalogService:
             "pipeline_tag": raw.get("pipeline_tag"), "capabilities": [], "experimental": res.experimental,
             "curated": False, "options": {}, "url": f"https://huggingface.co/{rid}",
             "bf16_only": dtypes == {"BF16"} and modality in ("image", "video"),
+            "moe": _moe_name(rid),
             "context_length": max(windows) if windows else None, "_order": order,
             **({"_single_file": True} if single_file else {}),
             **(profile(rid, tags=raw.get("tags", []), config=raw.get("config"), pipeline=raw.get("pipeline_tag")) if modality == "text" else {}),
@@ -943,6 +953,8 @@ class CatalogService:
         it["fit"] = f.to_dict()
         it["spec"] = self._spec(it, f)
         it["engine_label"] = ENGINE_LABELS.get(it.get("engine") or "", it.get("engine"))
+        # Fine-tuning needs a text base repo: the same signal abliteration uses.
+        it["finetune"] = it.get("modality") == "text" and bool(it.get("abliterate_source"))
         it["hardware"] = _hw_summary(hw)
         return it
 

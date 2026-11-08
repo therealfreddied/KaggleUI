@@ -83,7 +83,7 @@ def test_sglang_is_a_selectable_text_engine():
     from kaggleui.catalog.resolve import ENGINE_LABELS, MODALITY_ENGINES
 
     assert ENGINE_LABELS["sglang"] == "SGLang"
-    assert MODALITY_ENGINES["text"] == ["ollama", "llamacpp", "vllm", "sglang", "transformers"]
+    assert MODALITY_ENGINES["text"] == ["ollama", "llamacpp", "bigmoe", "vllm", "sglang", "transformers"]
 
 
 def test_context_length_reads_real_configs():

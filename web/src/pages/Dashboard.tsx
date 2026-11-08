@@ -1,10 +1,12 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ArrowUpRight, Boxes, Download, FileCode2, KeyRound, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 
 import { GpuMeter, LedMeter, ProgressBar } from "../components/meters";
 import { ModelLogo } from "../components/ModelLogo";
-import { Button, CopyButton, SectionTitle } from "../components/ui";
+import { Button, CopyButton, Input, SectionTitle, useToast } from "../components/ui";
+import { api } from "../lib/api";
 import { bytes, cx, duration, memoryPool, MODALITY_LABEL } from "../lib/format";
 import { useLive } from "../lib/live";
 import type { Deployment } from "../lib/types";
@@ -111,6 +113,159 @@ function GettingStarted() {
         </Link>
       </div>
     </div>
+  );
+}
+
+function QuotaBar({ label, used, budget }: { label: string; used: number; budget: number }) {
+  const ratio = budget > 0 ? Math.min(1, used / budget) : 0;
+  return (
+    <div>
+      <div className="stat-line">
+        <span>{label}</span>
+        <b className={cx(budget > 0 && used >= budget && "text-worst")}>{used.toFixed(1)} / {budget} h</b>
+      </div>
+      <LedMeter value={ratio} segments={30} className="mt-2 h-1.5" />
+    </div>
+  );
+}
+
+/** Local accelerator time against a user-set weekly budget; Kaggle has no quota API to read. */
+function FeedCard() {
+  const cache = useQueryClient();
+  const toast = useToast();
+  const feed = useQuery({ queryKey: ["feed"], queryFn: api.feed, retry: false, staleTime: 60_000 });
+  const [repo, setRepo] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function add(event: React.FormEvent) {
+    event.preventDefault();
+    const cleaned = repo.trim().replace(/^https?:\/\/(www\.)?huggingface\.co\//, "").split("?")[0].replace(/\/+$/, "");
+    if (!cleaned) return;
+    setBusy(true);
+    try {
+      await api.addFeed(cleaned);
+      await cache.invalidateQueries({ queryKey: ["feed"] });
+      setRepo("");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Couldn't pin that repo", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(target: string) {
+    try {
+      await api.removeFeed(target);
+      await cache.invalidateQueries({ queryKey: ["feed"] });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Couldn't remove it", "error");
+    }
+  }
+
+  if (feed.error) return null;
+  const entries = feed.data?.entries ?? [];
+  return (
+    <section className="panel mt-4 p-4">
+      <h3 className="text-[14px] font-medium">Watched models</h3>
+      <p className="mt-1 text-[12px] leading-relaxed text-fg-3">
+        Hugging Face repos pinned here; download counts and updates come from the Hub.
+      </p>
+      <form onSubmit={add} className="mt-3 flex gap-2">
+        <Input
+          value={repo}
+          onChange={(e) => setRepo(e.target.value)}
+          placeholder="https://huggingface.co/owner/model"
+          className="min-w-0 flex-1 font-mono"
+        />
+        <Button type="submit" busy={busy} disabled={!repo.trim()}>Pin</Button>
+      </form>
+      {entries.length > 0 && (
+        <table className="mt-3 w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-[11.5px] uppercase tracking-[0.08em] text-fg-3">
+              <th className="pb-1 font-medium">Repo</th>
+              <th className="pb-1 text-right font-medium">Downloads</th>
+              <th className="pb-1 text-right font-medium">Updated</th>
+              <th className="pb-1" />
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.repo} className="border-t border-line">
+                <td className="max-w-[280px] truncate py-1.5">
+                  <a className="hover:underline" href={`https://huggingface.co/${entry.repo}`} target="_blank" rel="noreferrer">{entry.repo}</a>
+                  {entry.error && <span className="ml-2 text-warn">unavailable</span>}
+                </td>
+                <td className="py-1.5 text-right tabular-nums text-fg-2">{entry.downloads ?? "—"}</td>
+                <td className="py-1.5 text-right text-fg-2">{entry.last_modified ? new Date(entry.last_modified * 1000).toLocaleDateString() : "—"}</td>
+                <td className="py-1.5 text-right">
+                  <button className="text-[12px] text-fg-3 hover:text-worst" onClick={() => remove(entry.repo)}>Remove</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
+}
+
+function QuotaCard() {
+  const cache = useQueryClient();
+  const toast = useToast();
+  const quota = useQuery({ queryKey: ["quota"], queryFn: api.quota, retry: false, refetchInterval: 60_000 });
+  const [editing, setEditing] = useState(false);
+  const [gpu, setGpu] = useState("");
+  const [tpu, setTpu] = useState("");
+  const data = quota.data;
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    try {
+      await api.updateSettings({ quota: { weekly_gpu_hours: Number(gpu), weekly_tpu_hours: Number(tpu) } });
+      await cache.invalidateQueries({ queryKey: ["quota"] });
+      setEditing(false);
+      toast("Quota budget saved");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Couldn't save the budget", "error");
+    }
+  }
+
+  if (quota.error) return null;
+  return (
+    <section className="panel mt-4 p-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="text-[14px] font-medium">Weekly quota</h3>
+        <span className="text-[12px] text-fg-3">{data ? `resets ${data.resets_on}` : "…"}</span>
+      </div>
+      <p className="mt-1 text-[12px] leading-relaxed text-fg-3">Time measured on this machine, against the budget you set.</p>
+      {data && (
+        <div className="mt-3 space-y-3">
+          <QuotaBar label="GPU" used={data.used_gpu_hours} budget={data.budget_gpu_hours} />
+          <QuotaBar label="TPU" used={data.used_tpu_hours} budget={data.budget_tpu_hours} />
+        </div>
+      )}
+      {data && (editing ? (
+        <form className="mt-3 flex flex-wrap items-end gap-2" onSubmit={save}>
+          <label className="text-[12px] text-fg-2">
+            GPU hours
+            <Input className="mt-1 w-20" type="number" min="0" step="0.5" value={gpu} onChange={(e) => setGpu(e.target.value)} />
+          </label>
+          <label className="text-[12px] text-fg-2">
+            TPU hours
+            <Input className="mt-1 w-20" type="number" min="0" step="0.5" value={tpu} onChange={(e) => setTpu(e.target.value)} />
+          </label>
+          <Button type="submit" variant="primary" size="sm">Save</Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
+        </form>
+      ) : (
+        <Button variant="ghost" size="sm" className="mt-3" onClick={() => {
+          setGpu(String(data.budget_gpu_hours));
+          setTpu(String(data.budget_tpu_hours));
+          setEditing(true);
+        }}>Set budget</Button>
+      ))}
+    </section>
   );
 }
 
@@ -263,6 +418,8 @@ export default function Dashboard() {
               </div>
             </section>
           </div>
+          <QuotaCard />
+          <FeedCard />
           <p className="mt-4 px-1 text-[12px] leading-relaxed text-fg-3">
             Models live on the notebook's temporary disk and disappear when the session ends. Save a launch cell to bring them back.
           </p>

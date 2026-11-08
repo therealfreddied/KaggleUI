@@ -1,7 +1,7 @@
 """Latency and throughput benchmarks against a running deployment.
 
-Runs in-process against ``manager.resolve`` so no auth or HTTP hop is involved; the CLI is the only
-entry point and the result is stored as an ``export`` artifact for later comparison.
+Runs in-process against ``manager.resolve`` so no auth or HTTP hop is involved; both the CLI and
+``POST /_kui/api/benchmarks`` reach it, and the result is stored as an ``export`` artifact.
 """
 
 from __future__ import annotations
@@ -114,3 +114,25 @@ def format_table(report: dict[str, Any]) -> str:
         lines.append(f"{row['ctx']:>6} {row['prompt_tokens']:>7} {row['ttft_s']:>7.3f} "
                      f"{row['total_s']:>8.3f} {row['tokens_per_s']:>7.1f} {row['output_tokens']:>4}")
     return "\n".join(lines)
+
+def records(state: AppState) -> list[dict[str, Any]]:
+    """Benchmark reports already stored as artifacts, newest first."""
+    out = []
+    for manifest in state.artifacts.list():
+        report = (manifest.recipe or {}).get("bench")
+        if manifest.kind != "export" or not isinstance(report, dict):
+            continue
+        rows = report.get("results") or []
+        out.append({
+            "deployment": report.get("model") or "",
+            "model_rev": report.get("model_rev") or "",
+            "engine": report.get("engine") or "",
+            "created_at": report.get("created_at") or manifest.created_at,
+            "runs_per_point": report.get("runs_per_point") or 1,
+            "best_tokens_per_s": max((r.get("tokens_per_s") or 0.0 for r in rows), default=0.0),
+            "best_ttft_s": min((r.get("ttft_s") or 0.0 for r in rows), default=0.0),
+            "rows": len(rows),
+            "artifact_id": manifest.artifact_id,
+            "version": manifest.version,
+        })
+    return sorted(out, key=lambda r: r["created_at"], reverse=True)

@@ -32,6 +32,10 @@ async def deploy(spec: DeploymentSpec, ctx: EngineContext, *, mock: bool) -> tup
         from . import llamacpp
 
         return await llamacpp.deploy(spec, ctx)
+    if engine == "bigmoe":
+        from . import bigmoe
+
+        return await bigmoe.deploy(spec, ctx)
     if engine == "world_recipe":
         from . import world_engine
 

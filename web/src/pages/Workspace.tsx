@@ -582,7 +582,7 @@ function ModelFiles() {
   );
 }
 
-export default function Workspace() {
+export function WorkspaceSections() {
   const workspace = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const [draft, setDraft] = useState<WorkspaceSettings | null>(null);
 
@@ -594,15 +594,7 @@ export default function Workspace() {
   if (!workspace.data) return null;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
-      <div>
-        <div className="eyebrow">Portability</div>
-        <h1 className="display mt-1 text-[30px]">Workspace</h1>
-        <p className="mt-1 max-w-2xl text-[13.5px] text-fg-2">
-          Restore dashboard preferences, deployment definitions and storage connections on a fresh instance. Model files travel
-          separately; runtime state is always rebuilt locally.
-        </p>
-      </div>
+    <div className="space-y-6">
 
       <section className="panel p-4">
         <SectionTitle title="GitHub sync" description="A versioned workspace document in a repository you control." />

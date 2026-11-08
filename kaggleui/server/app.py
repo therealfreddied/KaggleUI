@@ -28,6 +28,7 @@ from ..tunnels.manager import PROVIDER_LABELS
 from ..tunnels.persistent import PersistentProcess, take_handoff
 from ..workbench import sync as workspace_sync
 from .auth import ACCESS_COOKIE, ADMIN_COOKIE
+from .console import console_ws
 from .proxy import proxy_http, proxy_ws
 from .state import AppState
 from .studio import studio_ws
@@ -72,6 +73,7 @@ def create_app(state: AppState) -> FastAPI:
             except Exception:
                 pass
             state.jobs.close()
+            state.quota.end()
 
     app = FastAPI(title="KaggleUI", version=__version__, lifespan=lifespan, docs_url=None, redoc_url=None,
                   openapi_url=None)
@@ -210,12 +212,32 @@ def create_app(state: AppState) -> FastAPI:
         require_admin(request)
         return state.probe.snapshot().to_dict()
 
+    @app.get("/_kui/api/system/quota")
+    async def quota(request: Request):
+        require_admin(request)
+        from ..system.quota import week_start
+
+        now = time.time()
+        since = week_start(now)
+        budgets = state.settings.quota
+        session = state.host.session_info()
+        return {
+            "used_gpu_hours": round(state.quota.used("gpu", since, until=now) / 3600, 2),
+            "budget_gpu_hours": budgets.weekly_gpu_hours,
+            "used_tpu_hours": round(state.quota.used("tpu", since, until=now) / 3600, 2),
+            "budget_tpu_hours": budgets.weekly_tpu_hours,
+            "session_elapsed_s": round(max(0.0, now - state.started_at)),
+            "session_limit_s": session.session_limit_s,
+            "resets_on": time.strftime("%Y-%m-%d", time.localtime(since + 7 * 86400)),
+        }
+
     @app.put("/_kui/api/settings")
     async def update_settings(request: Request, patch: SettingsPatch):
         require_admin(request)
         before = state.settings.exposure.provider
         data = state.settings.model_dump()
-        for section in ("access", "api", "exposure", "storage", "optimize", "cache", "ml", "workspace"):
+        for section in ("access", "api", "exposure", "storage", "optimize", "cache", "ml", "workspace", "quota",
+                        "feed"):
             changes = getattr(patch, section)
             if changes:
                 data[section].update(changes)
@@ -556,6 +578,10 @@ def create_app(state: AppState) -> FastAPI:
     async def studio(ws: WebSocket):
         await studio_ws(ws, state)
 
+    @app.websocket("/_kui/ws/console")
+    async def console(ws: WebSocket):
+        await console_ws(ws, state)
+
     # =========================================================================================
     # Gradio (path-prefixed proxy)
     # =========================================================================================
@@ -634,6 +660,12 @@ async def _metrics_loop(state: AppState) -> None:
             pass
 
 
+def _process_started() -> float | None:
+    try:
+        return psutil.Process().create_time()
+    except psutil.Error:
+        return None
+
 def _write_state(state: AppState, status: str = "running") -> None:
     tunnel = state.tunnels.get("main")
     if tunnel and isinstance(tunnel.proc, PersistentProcess):
@@ -644,7 +676,7 @@ def _write_state(state: AppState, status: str = "running") -> None:
     data = {
         "pid": os.getpid(), "version": __version__, "port": state.port, "status": status,
         "url": state.main_url() if status == "running" else None,
-        "process_started_at": psutil.Process().create_time(),
+        "process_started_at": _process_started(),
         "tunnel": (state.tunnels.get("main").info() if state.tunnels.get("main") else None),
         "admin_token": state.auth.admin_token,
         "password": state.auth.password if state.settings.access.password_enabled else None,
@@ -678,6 +710,9 @@ async def _open_main_tunnel(state: AppState) -> bool:
 
 async def _startup(state: AppState) -> None:
     _write_state(state, "starting")
+    # A panel restart writes this file so the notebook cell keeps waiting; the replacement
+    # server is up once it can answer locally, so remove it before announcing anything.
+    (state.paths.home / "restart.json").unlink(missing_ok=True)
     # Lifespan tasks can run before Uvicorn binds its listening socket. In particular,
     # a local-only tunnel is instant: publishing its URL early raced notebook clients.
     import httpx

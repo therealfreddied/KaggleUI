@@ -57,6 +57,54 @@ export interface Settings {
   cache: CacheProfile;
   ml: MLSettings;
   workspace: WorkspaceSettings;
+  quota: QuotaSettings;
+  feed: FeedSettings;
+}
+
+export interface BenchmarkRecord {
+  deployment: string;
+  model_rev: string;
+  engine: string;
+  created_at: number;
+  runs_per_point: number;
+  best_tokens_per_s: number;
+  best_ttft_s: number;
+  rows: number;
+  artifact_id: string;
+  version: string;
+}
+
+export interface FeedSettings {
+  favorites: string[];
+}
+
+export interface FeedEntry {
+  repo: string;
+  id: string;
+  pipeline_tag?: string | null;
+  downloads?: number | null;
+  likes?: number | null;
+  last_modified?: number | null;
+  gated?: boolean;
+  private?: boolean;
+  error?: string | null;
+}
+
+export interface QuotaSettings {
+  weekly_gpu_hours: number;
+  weekly_tpu_hours: number;
+  week_resets: "monday";
+}
+
+/** Measured locally by the server ledger; budgets come from settings. */
+export interface QuotaStatus {
+  used_gpu_hours: number;
+  budget_gpu_hours: number;
+  used_tpu_hours: number;
+  budget_tpu_hours: number;
+  session_elapsed_s: number;
+  session_limit_s: number | null;
+  resets_on: string;
 }
 
 export interface MLSettings {
@@ -218,6 +266,7 @@ export interface OptimizationProfile {
   context_strategy: "head" | "tail" | "middle" | "balanced";
   output_headroom_margin: number;
   terse_replies: boolean;
+  system_prompt: string;
 }
 
 export interface CacheProfile {
@@ -235,6 +284,12 @@ export interface StorageConnection {
   /** Name of the secret holding the credential, never the value itself. */
   secret: string | null;
   read_only: boolean;
+}
+
+export interface RcloneRemote {
+  name: string;
+  /** Configured options with secret values masked. */
+  options: Record<string, string>;
 }
 
 export interface ArtifactFile {
@@ -316,7 +371,7 @@ export interface DeploymentSpec {
   modality: Modality;
   model: ModelRef;
   name?: string | null;
-  interface?: "studio" | "gradio" | "openwebui" | "comfyui" | "none";
+  interface?: "studio" | "gradio" | "openwebui" | "comfyui" | "overtchat" | "none";
   options?: Record<string, unknown>;
   gpus?: number[] | null;
   /** direct = one process per deployment; llama_swap = one shared llama-swap proxy. */
@@ -355,6 +410,20 @@ export interface PlacementPreview {
 }
 
 export type JobState = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "interrupted";
+
+export interface ForgeBody {
+  base: ModelRef;
+  output_name?: string;
+  dataset_artifact?: string;
+  stages: ("train" | "eval" | "edit" | "export" | "deploy_test")[];
+  method?: "lora" | "qlora";
+  eval_deployment?: string;
+  edit_method?: "quick" | "heretic";
+  edit_trials?: number;
+  quant?: string;
+  allow_quick_quant?: boolean;
+  allow_blind_edit?: boolean;
+}
 
 export interface Job {
   id: string;
@@ -481,6 +550,8 @@ export interface Fit {
   vram_needed: number | null;
   capacity: number | null;
   placement: "single" | "split" | "offload" | "cpu" | "none";
+  /** Which hardware this verdict assumes: one card, offload, CPU only, or TPU. */
+  mode: "gpu" | "gpu_cpu" | "cpu" | "tpu";
   reasons: string[];
   warnings: string[];
   disk_needed: number | null;
@@ -516,6 +587,17 @@ export interface CatalogBrand {
   count?: number;
 }
 
+export interface ModelPreset {
+  name: string;
+  engine?: string;
+  quant?: string;
+  ctx?: number;
+  lifecycle?: string;
+  placement?: string;
+  note?: string;
+  options?: Record<string, unknown>;
+}
+
 export interface CatalogItem {
   brand?: CatalogBrand;
   custom_code?: boolean;
@@ -547,6 +629,10 @@ export interface CatalogItem {
   experimental: boolean;
   curated: boolean;
   selftest?: boolean;
+  finetune?: boolean;
+  presets?: ModelPreset[];
+  /** MoE signature from the repo name; the engine still re-checks expert_count in the GGUF. */
+  moe?: boolean;
   options: Record<string, unknown>;
   url: string | null;
   fit: Fit;

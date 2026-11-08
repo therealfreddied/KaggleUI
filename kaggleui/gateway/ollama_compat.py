@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from .. import __version__
 from .common import GatewayError, check_access, find, ollama_error, state_of, wrap
+from .reasoning import normalize_response, normalize_stream
 from .translate import (
     ollama_chat_to_openai,
     ollama_generate_to_openai,
@@ -93,9 +94,10 @@ async def _chatlike(request: Request, generate: bool):
     oai = ollama_generate_to_openai(body) if generate else ollama_chat_to_openai(body)
     optimize = state_of(request).optimize
     if body.get("stream", True):
-        return StreamingResponse(openai_stream_to_ollama(optimize.chat_stream(dep, oai), dep.served_name, generate),
+        stream = normalize_stream(optimize.chat_stream(dep, oai))
+        return StreamingResponse(openai_stream_to_ollama(stream, dep.served_name, generate),
                                  media_type="application/x-ndjson")
-    resp = await optimize.chat(dep, {**oai, "stream": False})
+    resp = normalize_response(await optimize.chat(dep, {**oai, "stream": False}))
     out = openai_to_ollama_chat(resp, dep.served_name)
     if generate:
         out["response"] = out.pop("message", {}).get("content", "")

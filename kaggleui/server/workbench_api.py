@@ -647,6 +647,78 @@ async def start_convert(request: Request):
     except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
+@router.get("/workbench/ml/forge")
+def list_forge(request: Request):
+    st = _admin(request)
+    return {"jobs": [r.public() for r in st.jobs.list(limit=50, kind="forge")]}
+
+@router.post("/workbench/ml/forge")
+async def start_forge(request: Request):
+    from ..engines.context import DeployError
+    from ..ml.pipeline import ForgePlan, start
+
+    st = _admin(request)
+    try:
+        plan = ForgePlan.model_validate(await request.json())
+    except ValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    try:
+        return await start(st, plan)
+    except DeployError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+@router.post("/workbench/ml/forge/{job_id}/cancel")
+async def cancel_forge(request: Request, job_id: str):
+    from ..engines.context import DeployError
+    from ..ml.pipeline import cancel
+
+    st = _admin(request)
+    try:
+        return await cancel(st, job_id)
+    except DeployError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+@router.get("/benchmarks")
+def list_benchmarks(request: Request):
+    from ..workbench import bench
+
+    st = _admin(request)
+    return {"benchmarks": bench.records(st)}
+
+@router.post("/benchmarks")
+async def run_benchmarks(request: Request):
+    from ..workbench import bench
+
+    st = _admin(request)
+    body = await request.json()
+    dep_id = str(body.get("deployment_id") or "")
+    dep = st.manager.deployments.get(dep_id)
+    if dep is None:
+        raise HTTPException(404, f"no deployment {dep_id}")
+    if dep.spec.modality != "text":
+        raise HTTPException(422, "benchmarks only run against text deployments")
+    ctxs = tuple(int(v) for v in (body.get("ctxs") or [2048]))[:3]
+    prompts = tuple(int(v) for v in (body.get("prompts") or [128]))[:3]
+    runs = max(1, min(int(body.get("runs") or 1), 5))
+    if any(v <= 0 or v > 262144 for v in ctxs) or any(v <= 0 or v > 32768 for v in prompts):
+        raise HTTPException(422, "ctx must be 1..262144 and prompts 1..32768")
+    job = st.jobs.create("bench", {"deployment_id": dep.id, "ctxs": list(ctxs), "prompts": list(prompts),
+                                   "runs": runs}, logs_path=str(_job_log(st, "bench")))
+
+    async def work(ctx):
+        ctx.log(f"benchmarking {dep.served_name} over {len(ctxs) * len(prompts)} points")
+        await st.manager.ensure_ready(dep)
+        ctx.progress(0.1, "running")
+        report = await bench.bench(st, dep.served_name, ctxs=ctxs, prompt_tokens=prompts, runs=runs)
+        ctx.progress(0.9, "saving artifact")
+        saved = bench.save(st, report)
+        ctx.progress(1.0, "done")
+        if "artifact_dir" in saved:
+            ctx.log(f"artifact {saved['artifact_dir']}")
+
+    await start_local(st.jobs, job, work)
+    return st.jobs.get(job.id).public()
+
 @router.get("/workbench/ml/edit")
 def list_edit(request: Request):
     st = _admin(request)

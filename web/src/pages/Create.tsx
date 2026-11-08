@@ -1,13 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, GraduationCap, MessagesSquare, Upload, Wand2 } from "lucide-react";
 import { useState } from "react";
+import { useLocation } from "react-router";
 
-import { Button, Chip, Empty, Field, Input, Segmented, Select, Textarea, useToast } from "../components/ui";
+import { Button, Chip, Empty, Field, Input, Segmented, Select, Textarea, Toggle, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { useLive } from "../lib/live";
 import type { DatasetReport, EvalReport } from "../lib/types";
 
-type Tab = "datasets" | "training" | "teacher" | "evaluate" | "edit" | "export";
+type Tab = "datasets" | "training" | "teacher" | "evaluate" | "edit" | "export" | "pipeline";
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "datasets", label: "Datasets" },
@@ -16,6 +17,7 @@ const TABS: { value: Tab; label: string }[] = [
   { value: "evaluate", label: "Evaluate" },
   { value: "edit", label: "Edit" },
   { value: "export", label: "Export" },
+  { value: "pipeline", label: "Pipeline" },
 ];
 
 function Datasets() {
@@ -315,6 +317,114 @@ function Evaluate() {
   );
 }
 
+function Pipeline() {
+  const cache = useQueryClient();
+  const toast = useToast();
+  const { overview } = useLive();
+  const datasets = useQuery({ queryKey: ["ml-datasets"], queryFn: api.mlDatasets });
+  const jobs = useQuery({ queryKey: ["jobs", "forge"], queryFn: api.forges, refetchInterval: 3000 });
+  const [form, setForm] = useState({
+    base: "Qwen/Qwen2.5-0.5B-Instruct", dataset: "", output: "", quant: "q4_k_m",
+    evalDeployment: "", edit: false, blindEdit: false, deployTest: false,
+  });
+  const [busy, setBusy] = useState(false);
+  const set = (key: keyof typeof form) => (value: string | boolean) => setForm((f) => ({ ...f, [key]: value }));
+  const textDeps = (overview?.deployments ?? []).filter((d) => d.status === "ready" && d.modality === "text");
+
+  async function start() {
+    setBusy(true);
+    try {
+      const stages: ("train" | "eval" | "edit" | "export" | "deploy_test")[] = ["train"];
+      if (form.evalDeployment) stages.push("eval");
+      if (form.edit) stages.push("edit");
+      stages.push("export");
+      if (form.deployTest) stages.push("deploy_test");
+      const job = await api.startForge({
+        base: { source: "hf", id: form.base, variant: null, engine: "transformers" },
+        output_name: form.output || undefined,
+        dataset_artifact: form.dataset,
+        stages,
+        quant: form.quant,
+        eval_deployment: form.evalDeployment || undefined,
+        allow_blind_edit: form.blindEdit,
+      });
+      toast(`Pipeline ${job.id} started`);
+      await cache.invalidateQueries({ queryKey: ["jobs", "forge"] });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancel(id: string) {
+    try {
+      await api.cancelForge(id);
+      await cache.invalidateQueries({ queryKey: ["jobs", "forge"] });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <Field label="Base model" hint="Hugging Face repo id.">
+          <Input value={form.base} onChange={(e) => set("base")(e.target.value)} />
+        </Field>
+        <Field label="Dataset" hint="Validated datasets only.">
+          <Select value={form.dataset} onChange={(e) => set("dataset")(e.target.value)}>
+            <option value="">Pick a dataset</option>
+            {(datasets.data?.datasets ?? []).map((d) => (
+              <option key={`${d.artifact_id}@${d.version}`} value={`${d.artifact_id}@${d.version}`}>
+                {d.artifact_id} ({d.version})
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label="Eval deployment" hint="Optional; enables the eval stage and the edit guard.">
+          <Select value={form.evalDeployment} onChange={(e) => set("evalDeployment")(e.target.value)}>
+            <option value="">Skip eval</option>
+            {textDeps.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Export quant">
+          <Select value={form.quant} onChange={(e) => set("quant")(e.target.value)}>
+            <option value="q4_k_m">Q4_K_M</option>
+            <option value="q5_k_m">Q5_K_M</option>
+            <option value="q8_0">Q8_0</option>
+          </Select>
+        </Field>
+        <Field label="Output name"><Input value={form.output} onChange={(e) => set("output")(e.target.value)} placeholder="auto" /></Field>
+      </div>
+      <div className="space-y-2">
+        <Toggle checked={form.edit} onChange={() => set("edit")(!form.edit)} label="Abliterate before export" hint="Replaces training output with an abliterated model." />
+        {form.edit && (
+          <Toggle checked={form.blindEdit} onChange={() => set("blindEdit")(!form.blindEdit)} label="Allow blind edit" hint="Only needed when no eval deployment is selected." />
+        )}
+        <Toggle checked={form.deployTest} onChange={() => set("deployTest")(!form.deployTest)} label="Deploy the result" hint="Starts a llama.cpp deployment on the exported GGUF." />
+      </div>
+      <Button busy={busy} onClick={start} disabled={!form.base.includes("/") || !form.dataset}>
+        <Wand2 className="size-4" /> Run pipeline
+      </Button>
+
+      <div className="space-y-2">
+        {(jobs.data?.jobs ?? []).map((job) => (
+          <div key={job.id} className="flex items-center justify-between gap-3 rounded-lg border border-line px-3 py-2 text-[13px]">
+            <span className="font-mono text-[12.5px]">{job.id}</span>
+            <Chip tone={job.state === "failed" ? "warn" : job.state === "succeeded" ? "plain" : "signal"}>{job.state}</Chip>
+            <span className="min-w-0 flex-1 truncate text-muted">{job.error ?? job.message}</span>
+            {!["succeeded", "failed", "cancelled"].includes(job.state) && (
+              <Button size="sm" variant="ghost" onClick={() => cancel(job.id)}>Cancel</Button>
+            )}
+          </div>
+        ))}
+        {(jobs.data?.jobs ?? []).length === 0 && <Empty title="No pipelines yet">Train, evaluate, edit and export run as one chain.</Empty>}
+      </div>
+    </div>
+  );
+}
+
 function Export() {
   const toast = useToast();
   const cache = useQueryClient();
@@ -385,7 +495,8 @@ function Export() {
 function Edit() {
   const toast = useToast();
   const cache = useQueryClient();
-  const [repo, setRepo] = useState("");
+  const prefill = useLocation().state as { abliterate?: string; abliterateFrom?: string } | null;
+  const [repo, setRepo] = useState(prefill?.abliterate ?? "");
   const [method, setMethod] = useState<"quick" | "heretic">("quick");
   const [trials, setTrials] = useState("30");
   const [quant, setQuant] = useState("yes");
@@ -473,6 +584,7 @@ export default function CreatePage() {
       {tab === "evaluate" && <Evaluate />}
       {tab === "edit" && <Edit />}
       {tab === "export" && <Export />}
+      {tab === "pipeline" && <Pipeline />}
     </div>
   );
 }

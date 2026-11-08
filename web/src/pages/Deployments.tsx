@@ -1,9 +1,10 @@
 import { Check, ExternalLink, FileCode2, Plus, RotateCcw, ScrollText, SlidersHorizontal, Sparkles, Square } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation } from "react-router";
 
 import { ProgressBar } from "../components/meters";
-import { Button, CopyButton, Drawer, Empty, SectionTitle, useToast } from "../components/ui";
+import { Button, CopyButton, Drawer, Empty, Field, Select, SectionTitle, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { bytes, cx, duration, ENGINE_LABEL, MODALITY_LABEL } from "../lib/format";
 import { useLive, useLogs } from "../lib/live";
@@ -80,6 +81,86 @@ function Logs({ id }: { id: string }) {
         ))
       )}
     </div>
+  );
+}
+
+function Benchmarks({ deps }: { deps: Deployment[] }) {
+  const cache = useQueryClient();
+  const toast = useToast();
+  const runs = useQuery({ queryKey: ["benchmarks"], queryFn: api.benchmarks, staleTime: 30_000 });
+  const text = deps.filter((d) => d.spec.modality === "text" && !["stopped", "error"].includes(d.status));
+  const [target, setTarget] = useState("");
+  const [ctx, setCtx] = useState("2048");
+  const [prompt, setPrompt] = useState("128");
+  const [busy, setBusy] = useState(false);
+  const deployment = target || text[0]?.id || "";
+
+  async function run() {
+    setBusy(true);
+    try {
+      const job = await api.runBenchmark({ deployment_id: deployment, ctxs: [Number(ctx)], prompts: [Number(prompt)], runs: 1 });
+      toast(`Benchmark ${job.id} started`);
+      await cache.invalidateQueries({ queryKey: ["benchmarks"] });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const rows = runs.data?.benchmarks ?? [];
+  if (text.length === 0 && rows.length === 0) return null;
+  return (
+    <section className="panel mt-6 p-5">
+      <h2 className="text-[15px] font-medium">Benchmarks</h2>
+      <p className="mt-1 text-[12.5px] text-fg-3">
+        Measured in process against a running deployment; each run is saved as an export artifact.
+      </p>
+      <div className="mt-4 flex flex-wrap items-end gap-3">
+        <Field label="Deployment">
+          <Select value={deployment} onChange={(e) => setTarget(e.target.value)}>
+            {text.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </Select>
+        </Field>
+        <Field label="Context">
+          <Select value={ctx} onChange={(e) => setCtx(e.target.value)}>
+            {["512", "2048", "4096", "8192"].map((v) => <option key={v} value={v}>{v}</option>)}
+          </Select>
+        </Field>
+        <Field label="Prompt tokens">
+          <Select value={prompt} onChange={(e) => setPrompt(e.target.value)}>
+            {["16", "128", "512"].map((v) => <option key={v} value={v}>{v}</option>)}
+          </Select>
+        </Field>
+        <Button busy={busy} onClick={run} disabled={!deployment}>Run benchmark</Button>
+      </div>
+      {rows.length > 0 && (
+        <table className="mt-4 w-full text-[12.5px]">
+          <thead>
+            <tr className="text-left text-[11.5px] uppercase tracking-[0.08em] text-fg-3">
+              <th className="pb-1 font-medium">Deployment</th>
+              <th className="pb-1 font-medium">Engine</th>
+              <th className="pb-1 text-right font-medium">Best tok/s</th>
+              <th className="pb-1 text-right font-medium">Best TTFT</th>
+              <th className="pb-1 text-right font-medium">Points</th>
+              <th className="pb-1 text-right font-medium">When</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${row.artifact_id}@${row.version}`} className="border-t border-line">
+                <td className="py-1.5">{row.deployment}</td>
+                <td className="py-1.5 text-fg-2">{ENGINE_LABEL[row.engine] ?? row.engine}</td>
+                <td className="py-1.5 text-right tabular-nums">{row.best_tokens_per_s.toFixed(1)}</td>
+                <td className="py-1.5 text-right tabular-nums">{row.best_ttft_s.toFixed(2)} s</td>
+                <td className="py-1.5 text-right tabular-nums">{row.rows}</td>
+                <td className="py-1.5 text-right text-fg-2">{new Date(row.created_at * 1000).toLocaleDateString()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
@@ -183,11 +264,11 @@ function DeploymentCard({ d, focus }: { d: Deployment; focus: boolean }) {
       {active && (
         <div className="mt-4">
           <ProgressBar value={d.progress} />
-          <div className="mt-1.5 text-[13px] text-fg-2">{d.message}</div>
+          <div className="mt-1.5 break-all text-[13px] leading-relaxed text-fg-2 line-clamp-2">{d.message}</div>
         </div>
       )}
       {d.status === "error" && (
-        <div className="mt-4 rounded-lg border border-worst/30 bg-worst-soft px-3.5 py-2.5 text-[13.5px] leading-relaxed text-fg">
+        <div className="mt-4 rounded-lg border border-worst/30 bg-worst-soft px-3.5 py-2.5 text-[13.5px] leading-relaxed text-fg break-all">
           <span className="font-medium text-worst">Failed. </span>
           {d.error}
         </div>
@@ -279,6 +360,7 @@ export default function Deployments() {
           ))}
         </div>
       )}
+      <Benchmarks deps={deps} />
       <Drawer open={preset !== null} onClose={() => setPreset(null)} title="Launch cell" width={720}>
         <div className="space-y-4 p-5">
           <p className="text-[14px] text-fg-2">

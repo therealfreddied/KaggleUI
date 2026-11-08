@@ -106,10 +106,13 @@ def export_document(state: AppState) -> WorkspaceDocument:
     ]
     meta = WorkspaceMeta(workspace_id=workspace_id, name=str(info.get("name") or "Default"),
                          app_version=__version__, exported_at=time.time(), source_host=state.host.name)
+    from . import bench
+
     return WorkspaceDocument(meta=meta, settings=state.settings.model_copy(deep=True), deployments=specs,
                              deployment_sets=sets, active_set=state.workbench.active_set,
                              storage_connections=connections, artifacts=artifacts,
-                             secret_requirements=secret_requirements(state, specs, connections))
+                             secret_requirements=secret_requirements(state, specs, connections),
+                             benchmarks=bench.records(state))
 
 def validate_document(raw: dict | WorkspaceDocument) -> WorkspaceDocument:
     """Parse and reject documents this build cannot apply without data loss."""

@@ -141,6 +141,9 @@ def openai_to_anthropic(resp: dict, model: str) -> dict:
     choice = (resp.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     content: list[dict] = []
+    reasoning = msg.get("reasoning_content") or msg.get("thinking")
+    if reasoning:
+        content.append({"type": "thinking", "thinking": reasoning, "signature": ""})
     if msg.get("content"):
         content.append({"type": "text", "text": msg["content"]})
     for tc in msg.get("tool_calls") or []:
@@ -186,6 +189,19 @@ async def openai_stream_to_anthropic(chunks: AsyncIterator[dict], model: str) ->
             usage = chunk["usage"]
         for choice in chunk.get("choices") or []:
             delta = choice.get("delta") or {}
+            thought = delta.get("reasoning_content") or delta.get("thinking")
+            if thought:
+                if open_kind != "thinking":
+                    c = close()
+                    if c:
+                        yield c
+                    index += 1
+                    open_kind = "thinking"
+                    yield _sse("content_block_start", {"type": "content_block_start", "index": index,
+                                                       "content_block": {"type": "thinking", "thinking": "",
+                                                                         "signature": ""}})
+                yield _sse("content_block_delta", {"type": "content_block_delta", "index": index,
+                                                   "delta": {"type": "thinking_delta", "thinking": thought}})
             text = delta.get("content")
             if text:
                 if open_kind != "text":
@@ -286,6 +302,9 @@ def openai_to_ollama_chat(resp: dict, model: str) -> dict:
     choice = (resp.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out_msg: dict = {"role": "assistant", "content": msg.get("content") or ""}
+    reasoning = msg.get("reasoning_content") or msg.get("thinking")
+    if reasoning:
+        out_msg["thinking"] = reasoning
     if msg.get("tool_calls"):
         out_msg["tool_calls"] = [{"function": {"name": tc["function"]["name"],
                                                "arguments": _parse_args(tc["function"].get("arguments"))}}
@@ -304,9 +323,19 @@ async def openai_stream_to_ollama(chunks: AsyncIterator[dict], model: str, gener
         if chunk.get("usage"):
             usage = chunk["usage"]
         for choice in chunk.get("choices") or []:
-            text = (choice.get("delta") or {}).get("content")
+            delta = choice.get("delta") or {}
+            text = delta.get("content")
+            thought = delta.get("reasoning_content") or delta.get("thinking")
             if choice.get("finish_reason"):
                 finish = choice["finish_reason"]
+            if thought:
+                if generate:
+                    yield json.dumps({"model": model, "created_at": _now_iso(), "thinking": thought,
+                                      "done": False}) + "\n"
+                else:
+                    yield json.dumps({"model": model, "created_at": _now_iso(),
+                                      "message": {"role": "assistant", "content": "", "thinking": thought},
+                                      "done": False}) + "\n"
             if text:
                 if generate:
                     yield json.dumps({"model": model, "created_at": _now_iso(), "response": text, "done": False}) + "\n"

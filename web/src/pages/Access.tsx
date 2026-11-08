@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 
 import { SecretsCard } from "../components/Secrets";
 import { AccessForm, ApiForm, ExposurePicker, StreamingNote, type ApiState } from "../components/settings";
-import { Button, CopyButton, CopyField, Segmented, SectionTitle, useToast } from "../components/ui";
+import { Button, CopyButton, CopyField, Field, Segmented, SectionTitle, Select, useToast } from "../components/ui";
 import { api } from "../lib/api";
 import { useLive } from "../lib/live";
 import type { Settings, TunnelProvider } from "../lib/types";
@@ -19,6 +19,42 @@ function Card({ title, kicker, children }: { title: string; kicker?: string; chi
 }
 
 type Lang = "curl" | "python" | "anthropic" | "js" | "ollama";
+
+const CLAUDE_MODEL_VARS = [
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_OPUS_MODEL",
+];
+
+function claudeEnv(base: string, key: string | null, model: string, ctx: string | null): Record<string, string> {
+  const env: Record<string, string> = { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: key ?? "unused" };
+  for (const name of CLAUDE_MODEL_VARS) env[name] = model;
+  if (ctx) env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = ctx;
+  return env;
+}
+
+function claudeScript(env: Record<string, string>): string {
+  const entries = Object.entries(env)
+    .map(([k, v]) => `    "${k}": ${JSON.stringify(v)},`)
+    .join("\n");
+  return `mkdir -p ~/.claude
+python3 - <<'PY'
+import json, pathlib
+
+path = pathlib.Path.home() / ".claude" / "settings.json"
+data = json.loads(path.read_text()) if path.exists() else {}
+data.setdefault("env", {}).update({
+${entries}
+})
+path.write_text(json.dumps(data, indent=2) + "\\n")
+print("Wrote", path)
+PY`;
+}
+
+function claudeShell(env: Record<string, string>): string {
+  return Object.entries(env).map(([k, v]) => `export ${k}=${JSON.stringify(v)}`).join("\n");
+}
 
 function snippet(lang: Lang, base: string, key: string | null, model: string): string {
   const k = key ?? "unused";
@@ -84,12 +120,46 @@ const ENDPOINTS: [string, string, string][] = [
   ["ollama", "POST /api/chat · /api/generate · /api/embed", "Ollama API"],
 ];
 
+function claudeCodeEnv(base: string, key: string | null, model: string, ctx: number | null): string {
+  const vars: [string, string][] = [
+    ["ANTHROPIC_BASE_URL", base],
+    ["ANTHROPIC_AUTH_TOKEN", key ?? "unused"],
+    ["ANTHROPIC_MODEL", model],
+    ["ANTHROPIC_DEFAULT_HAIKU_MODEL", model],
+    ["ANTHROPIC_DEFAULT_SONNET_MODEL", model],
+    ["ANTHROPIC_DEFAULT_OPUS_MODEL", model],
+  ];
+  if (ctx) vars.push(["CLAUDE_CODE_MAX_CONTEXT_TOKENS", String(ctx)]);
+  return vars.map(([name, value]) => `export ${name}=${JSON.stringify(value)}`).join("\n");
+}
+
+function claudeCodeSettings(base: string, key: string | null, model: string, ctx: number | null): string {
+  const env = claudeCodeEnv(base, key, model, ctx)
+    .split("\n")
+    .map((line) => line.replace(/^export /, "    "))
+    .join("\n");
+  return `mkdir -p ~/.claude
+python3 - <<'PY'
+import json, pathlib
+path = pathlib.Path.home() / ".claude" / "settings.json"
+data = json.loads(path.read_text()) if path.exists() else {}
+env = data.setdefault("env", {})
+merged = {
+${env}
+}
+for name, value in merged.items():
+    env[name] = value
+path.write_text(json.dumps(data, indent=2) + "\\n")
+PY`;
+}
+
 export default function Access() {
   const { overview, dispatch } = useLive();
   const toast = useToast();
   const [lang, setLang] = useState<Lang>("python");
   const [api_, setApi] = useState<ApiState | null>(null);
   const [locked, setLocked] = useState<boolean | null>(null);
+  const [ccId, setCcId] = useState("");
 
   useEffect(() => {
     if (location.hash === "#secrets") window.setTimeout(() => document.getElementById("secrets")?.scrollIntoView({ behavior: "smooth" }), 150);
@@ -118,6 +188,10 @@ export default function Access() {
   const model = overview.deployments.find((d) => d.status === "ready" && d.modality === "text")?.name ?? "<model>";
   const key = api_.require_key ? overview.credentials.api_key : null;
   const surfaces = ENDPOINTS.filter(([s]) => api_[s as "openai" | "anthropic" | "ollama"]);
+  const textDeps = overview.deployments.filter((d) => d.status === "ready" && d.modality === "text");
+  const selectedText = textDeps.find((d) => d.id === ccId) ?? textDeps[0] ?? null;
+  const ctxOption = Number(selectedText?.spec.options?.ctx);
+  const textCtx = Number.isFinite(ctxOption) && ctxOption > 0 ? ctxOption : null;
 
   return (
     <div>
@@ -207,6 +281,44 @@ export default function Access() {
                 </div>
               ))}
             </div>
+          )}
+        </Card>
+
+        <Card kicker="Client setup" title="Claude Code">
+          {!selectedText ? (
+            <p className="text-[13px] text-fg-3">Deploy a text model to generate the setup for it.</p>
+          ) : (
+            <>
+              <Field label="Model">
+                <Select value={selectedText.id} onChange={(e) => setCcId(e.target.value)}>
+                  {textDeps.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </Select>
+              </Field>
+              <p className="mt-2 text-[12.5px] text-fg-3">
+                Claude Code speaks the Anthropic Messages API. These variables point it at this machine; the model name is substituted for its built-in Sonnet/Haiku/Opus names.
+              </p>
+              <div className="relative mt-3">
+                <pre className="overflow-x-auto rounded-lg border border-line bg-bg p-4 font-mono text-[11.5px] leading-relaxed scroll-thin">
+                  {claudeCodeEnv(base, key, selectedText.name, textCtx)}
+                </pre>
+                <div className="absolute right-2 top-2">
+                  <CopyButton text={claudeCodeEnv(base, key, selectedText.name, textCtx)} label="Copy" />
+                </div>
+              </div>
+              <details className="mt-3">
+                <summary className="cursor-pointer text-[12.5px] text-fg-2">Persist in ~/.claude/settings.json</summary>
+                <div className="relative mt-2">
+                  <pre className="overflow-x-auto rounded-lg border border-line bg-bg p-4 font-mono text-[11.5px] leading-relaxed scroll-thin">
+                    {claudeCodeSettings(base, key, selectedText.name, textCtx)}
+                  </pre>
+                  <div className="absolute right-2 top-2">
+                    <CopyButton text={claudeCodeSettings(base, key, selectedText.name, textCtx)} label="Copy" />
+                  </div>
+                </div>
+              </details>
+            </>
           )}
         </Card>
       </div>

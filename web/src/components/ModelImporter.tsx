@@ -5,59 +5,11 @@ import { api } from "../lib/api";
 import { bytes } from "../lib/format";
 import type { CatalogItem } from "../lib/types";
 import { ProgressBar } from "./meters";
-import { Button, Field, Input, Segmented, Select, Toggle, useToast } from "./ui";
+import { Button, Field, Input, Select, useToast } from "./ui";
 
 const ACTIVE = ["queued", "downloading", "extracting", "scanning", "abliterating"];
 const KIND_LABEL: Record<string, string> = { hf: "Hugging Face", git: "Git", file: "File", abliterate: "Abliteration" };
 
-/** Remove a text model's refusal behaviour and save the result as an import. */
-export function Abliterator({ initialRepo = "", from }: { initialRepo?: string; from?: string }) {
-  const [repo, setRepo] = useState(initialRepo);
-  const [method, setMethod] = useState<"quick" | "heretic">("quick");
-  const [trials, setTrials] = useState(40);
-  const [quantize, setQuantize] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const toast = useToast();
-  const cache = useQueryClient();
-  return <form className="panel space-y-4 p-5" onSubmit={async (event) => {
-    event.preventDefault();
-    setBusy(true);
-    try {
-      await api.abliterate({ repo, method, trials, quantize });
-      await cache.invalidateQueries({ queryKey: ["model-imports"] });
-      toast("Abliteration started. It appears under Downloads below.");
-    } catch (error) { toast(error instanceof Error ? error.message : "Couldn't start abliteration", "error"); }
-    finally { setBusy(false); }
-  }}>
-    <div>
-      <h3 className="text-[16px] font-semibold">Abliterate a model</h3>
-      <p className="mt-1 max-w-[65ch] text-[13px] text-fg-2">Removes a text model's refusal behaviour by projecting its refusal direction out of the weights, then saves the result here so you can deploy it. Works on Hugging Face chat models in safetensors format, not GGUF/Ollama, image or video models. It uses the GPUs, so stop other deployments first.</p>
-    </div>
-    <Field label="Hugging Face model" hint={from ? (initialRepo
-      ? `${from} is a quantized build that can't be edited, so this is its original full-precision repo. It's a best guess: check it matches before starting.`
-      : `${from} is a quantized build that can't be edited, and its original repo couldn't be found. Enter the full-precision Hugging Face repo.`) : undefined}>
-      <Input required value={repo} onChange={e => setRepo(e.target.value)} placeholder="Qwen/Qwen3-4B-Instruct-2507" />
-    </Field>
-    {/* Not a <Field>: a <label> around buttons forwards clicks to the first one. */}
-    <div role="group" aria-labelledby="abliterate-method">
-      <span id="abliterate-method" className="mb-1.5 block text-[13px] font-medium">Method</span>
-      <Segmented value={method} onChange={v => setMethod(v as "quick" | "heretic")} options={[
-        { value: "quick", label: "Quick" },
-        { value: "heretic", label: "Thorough (Heretic)" },
-      ]} />
-    </div>
-    <p className="text-[12.5px] text-fg-3">{method === "quick"
-      ? "Measures the refusal direction from 128 prompt pairs, tests a few layers and edits the weights. About 5–15 minutes for a 4–8B model."
-      : "Heretic searches for the edit that removes the most refusals while changing the model least. Each trial takes a minute or more on a T4, so plan on an hour or longer; its environment installs on first use."}</p>
-    <div className="grid gap-3 sm:grid-cols-2">
-      {method === "heretic" && <Field label="Trials" hint="More trials find better edits but take longer (Heretic's default is 100).">
-        <Input type="number" min={10} max={300} value={trials} onChange={e => setTrials(Number(e.target.value) || 40)} />
-      </Field>}
-      <div className="sm:col-span-2"><Toggle checked={quantize} onChange={setQuantize} label="Load in 4-bit while analysing" hint="For models too big for the GPUs at 16-bit. The saved model keeps full precision." /></div>
-    </div>
-    <Button type="submit" variant="primary" busy={busy} disabled={!repo.trim()}>Start abliteration</Button>
-  </form>;
-}
 
 export function ModelImporter({ initialUrl = "", onCustomize }: { initialUrl?: string; onCustomize: (item: CatalogItem) => void }) {
   const [url, setUrl] = useState(initialUrl);

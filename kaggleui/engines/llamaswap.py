@@ -24,6 +24,8 @@ from .context import DeployError, EngineContext
 from .llamacpp_launch import server_argv, swap_model_entry, swap_yaml
 
 HEALTH_TIMEOUT = 120.0
+# Entries that are merely available (not deployed) unload after this many idle seconds.
+AVAILABLE_TTL = 300
 
 
 @dataclass
@@ -62,6 +64,53 @@ def _env_for(placed: place.ResolvedPlacement) -> list[str]:
 def _write_config(inst: SwapInstance) -> None:
     inst.config_path.parent.mkdir(parents=True, exist_ok=True)
     inst.config_path.write_text(swap_yaml(inst.models))
+
+def _local_ggufs(paths: Paths) -> dict[str, Path]:
+    """Every GGUF this home can load without a download: imports first, then pulled Ollama blobs."""
+    from ..catalog.imports import saved_models
+    from .ollama import gguf_blob
+
+    found: dict[str, Path] = {}
+    for model in saved_models(paths.models / "imports"):
+        path = Path(model.get("path", ""))
+        if path.suffix.lower() == ".gguf" and "mmproj" not in path.name.lower() and path.exists():
+            found.setdefault(path.stem, path)
+    manifests = paths.ollama_models / "manifests" / "registry.ollama.ai"
+    if manifests.exists():
+        for manifest in sorted(manifests.rglob("*")):
+            if not manifest.is_file() or manifest.name.startswith("."):
+                continue
+            parts = manifest.relative_to(manifests).parts
+            if len(parts) < 2:
+                continue
+            ref = "/".join(parts[:-1]) + ":" + parts[-1]
+            blob = gguf_blob(paths, ref)
+            if blob is not None:
+                found.setdefault(ref.removeprefix("library/"), blob)
+    return found
+
+def _available_entry(bin_path: Path, gguf: Path, served_name: str) -> dict[str, Any]:
+    from .llamacpp_launch import ALL_LAYERS
+
+    cmd = [str(bin_path), "--model", str(gguf), "--host", "127.0.0.1", "--port", "${PORT}",
+           "--alias", served_name, "--jinja", "--metrics", "--n-gpu-layers", str(ALL_LAYERS)]
+    return swap_model_entry(served_name=served_name, cmd=cmd, ttl=AVAILABLE_TTL)
+
+def _merge_available(inst: SwapInstance, paths: Paths, *, skip: str | None = None) -> None:
+    """List local GGUFs llama-swap can cold-load, so agents can see models that are not running."""
+    try:
+        bin_path = runtime.require_bin(paths, "llama-server")
+    except Exception:  # noqa: BLE001 - llama-server missing means nothing is runnable yet
+        return
+    for served_name, gguf in _local_ggufs(paths).items():
+        if served_name == skip or served_name in inst.models:
+            continue
+        inst.models[served_name] = _available_entry(bin_path, gguf, served_name)
+
+def listed_models(state: AppState) -> dict[str, dict[str, Any]]:
+    """Model ids llama-swap will answer for, including entries that load on demand."""
+    inst = _INSTANCES.get(str(state.paths.home))
+    return dict(inst.models) if inst is not None else {}
 
 
 async def _models_online(port: int) -> list[str] | None:
@@ -116,6 +165,7 @@ async def deploy(spec: DeploymentSpec, ctx: EngineContext) -> tuple[OpenAIUpstre
     inst = instance_for(ctx.paths)
     inst.models[ctx.served_name] = swap_model_entry(served_name=ctx.served_name, cmd=argv, ttl=ttl,
                                                     env=_env_for(placed))
+    _merge_available(inst, ctx.paths, skip=ctx.served_name)
     if ctx.workbench is not None:
         record = ctx.workbench.deployment_record(ctx.dep_id)
         ctx.workbench.put_deployment(ctx.dep_id, spec, ctx.served_name,
@@ -176,6 +226,7 @@ def sync_from_records(state: AppState) -> None:
     """Rebuild the config from durable records (used after a restart before the first request)."""
     inst = instance_for(state.paths)
     inst.models = {}
+    live = {d.served_name for d in state.manager.ready()}
     for record in state.workbench.deployment_records():
         if record.spec.get("lifecycle") != "llama_swap":
             continue
@@ -187,9 +238,12 @@ def sync_from_records(state: AppState) -> None:
         except ValueError:
             continue
         ttl = 0 if spec.residency == "pinned" else max(0, spec.idle_timeout_s)
+        if record.served_name not in live:
+            ttl = max(ttl, AVAILABLE_TTL)
         placed = place.resolve(spec, state.probe.snapshot(), arch=None, assigned=record.runtime.get("gpus") or None)
         inst.models[record.served_name] = swap_model_entry(served_name=record.served_name, cmd=list(argv), ttl=ttl,
                                                            env=_env_for(placed))
+    _merge_available(inst, state.paths)
     _write_config(inst)
 
 

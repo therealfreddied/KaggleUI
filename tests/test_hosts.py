@@ -60,9 +60,9 @@ def test_notebooks_install_through_the_same_script():
     kaggle = json.loads((ROOT / "notebooks" / "KaggleUI.ipynb").read_text())
     assert colab["nbformat"] == 4
     code = "\n".join("".join(cell["source"]) for cell in colab["cells"] if cell["cell_type"] == "code")
-    assert INSTALL in code and "kaggleui.launch()" in code
+    assert INSTALL in code and "kaggleui.launch(workspace=" in code
     kaggle_code = "\n".join("".join(cell["source"]) for cell in kaggle["cells"] if cell["cell_type"] == "code")
-    assert INSTALL in kaggle_code and "kaggleui.launch()" in kaggle_code
+    assert INSTALL in kaggle_code and "kaggleui.launch(workspace=" in kaggle_code
     assert "colab.ipynb" in "".join(kaggle["cells"][0]["source"])
 
 def test_detect_matches_config_flags():

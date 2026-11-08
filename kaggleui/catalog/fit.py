@@ -39,8 +39,8 @@ OFFLOAD_ENGINES = {"diffusers", "diffusers_video", "diffusers_world", "transform
 # Minimum CUDA compute capability (sm) per engine.
 ENGINE_MIN_SM = {"vllm": 70, "sglang": 75, "diffusers_world": 80}
 # Engines that are fine on CPU for small models.
-CPU_FRIENDLY = {"ollama", "llamacpp", "faster_whisper", "kokoro", "transformers_asr", "transformers_tts",
-                "mock"}
+CPU_FRIENDLY = {"ollama", "llamacpp", "bigmoe", "faster_whisper", "kokoro", "transformers_asr",
+                "transformers_tts", "mock"}
 # Engines with a TPU path. vLLM's TPU backend shards one model across every chip in the slice.
 TPU_ENGINES = {"vllm"}
 
@@ -84,6 +84,7 @@ class Fit:
     suggest: dict = field(default_factory=dict)
     unproven: bool = False
     obscure: bool = False
+    mode: str = "gpu"  # gpu | gpu_cpu | cpu | tpu
     """Engine options that make this fit work, e.g. ``{"offload": "model"}`` or ``{"quantize": "nf4"}``."""
 
     def to_dict(self) -> dict:
@@ -169,6 +170,15 @@ def _gpu_label(hw: HardwareProfile) -> str:
     return hw.accelerator_label.replace("GPU ", "")
 
 
+def _mode(hw: HardwareProfile, placement: str) -> str:
+    if hw.accelerator == "tpu":
+        return "tpu"
+    if placement == "offload":
+        return "gpu_cpu"
+    if placement in ("cpu", "none"):
+        return "cpu"
+    return "gpu"
+
 def assess(c: Candidate, hw: HardwareProfile) -> Fit:
     need = runtime_vram(c)
     w = c.weights_bytes or (int(c.params * 2) if c.params else None)
@@ -183,6 +193,7 @@ def assess(c: Candidate, hw: HardwareProfile) -> Fit:
              suggest: dict | None = None) -> Fit:
         f = Fit(verdict, need, capacity, placement, reasons, warnings, disk_needed, suggest=suggest or {},
                 unproven=c.experimental and not c.curated, obscure=is_obscure(c))
+        f.mode = _mode(hw, placement)
         f.score = score(c, f)
         return f
 
@@ -262,7 +273,7 @@ def assess(c: Candidate, hw: HardwareProfile) -> Fit:
             return done("tight", "offload", [f"≈{human_bytes(need)} at fp16: too big for {_gpu_label(hw)}",
                                              "Runs with 4-bit (nf4) weights + CPU offload; slower, slight quality loss"]
                         + busy_note, single, {"offload": "model", "quantize": "nf4"})
-    if c.engine in ("ollama", "llamacpp"):
+    if c.engine in ("ollama", "llamacpp", "bigmoe"):
         cap = total if len(hw.gpus) > 1 else single
         overflow = need - cap
         if cap >= need * 0.8 and overflow <= hw.ram_available * 0.6:

@@ -57,7 +57,10 @@ function interfaceOptions(m: Modality): { value: Iface; title: string; desc: str
     { value: "studio", title: "KaggleUI Studio", desc: "Built-in playground. Streams over WebSockets, so it works through any tunnel.", icon: <LayoutDashboard className="size-4" />, badge: "default" },
     { value: "gradio", title: "Gradio", desc: "Auto-generated Gradio app, with an optional public gradio.live link.", icon: <AppWindow className="size-4" /> },
   ];
-  if (m === "text") opts.push({ value: "openwebui", title: "Open WebUI", desc: "Full ChatGPT-style app: chat history, RAG, files. First start takes a few minutes.", icon: <Blocks className="size-4" /> });
+  if (m === "text") {
+    opts.push({ value: "openwebui", title: "Open WebUI", desc: "Full ChatGPT-style app: chat history, RAG, files. First start takes a few minutes.", icon: <Blocks className="size-4" /> });
+    opts.push({ value: "overtchat", title: "OvertChat", desc: "Next.js chat app with agent tooling. Needs Node.js 20.9+ and a few minutes to build.", icon: <Blocks className="size-4" /> });
+  }
   if (m === "image" || m === "video") opts.push({ value: "comfyui", title: "ComfyUI", desc: "Node workflows plus ComfyUI-Manager. Replaces the diffusers engine; no /v1/images API.", icon: <Workflow className="size-4" /> });
   opts.push({ value: "none", title: "API only", desc: "No UI, just the endpoints.", icon: <Plug className="size-4" /> });
   return opts;

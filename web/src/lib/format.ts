@@ -94,6 +94,7 @@ export const SOURCE_LABEL: Record<string, string> = {
 export const ENGINE_LABEL: Record<string, string> = {
   ollama: "Ollama (llama.cpp)",
   llamacpp: "llama.cpp",
+  bigmoe: "BigMoeOnEdge (MoE streaming)",
   vllm: "vLLM",
   sglang: "SGLang",
   transformers: "Transformers",

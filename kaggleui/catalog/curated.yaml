@@ -6,8 +6,8 @@ text:
   - {source: ollama, id: "qwen3.8:27b", name: "Qwen 3.8 27B", size_gb: 17.74, params_b: 27, blurb: "Latest Qwen: vision, tools, thinking. Splits across both T4s."}
   - {source: ollama, id: "qwen3.6:27b", name: "Qwen 3.6 27B", size_gb: 17.77, params_b: 27, blurb: "Strong agentic coding + reasoning, vision."}
   - {source: ollama, id: "gemma4:latest", name: "Gemma 4", size_gb: 6.58, params_b: 9, blurb: "Google's latest open model; fast on a single T4."}
-  - {source: ollama, id: "gpt-oss:20b", name: "gpt-oss 20B", size_gb: 13.79, params_b: 21, blurb: "OpenAI's open-weight reasoning model."}
-  - {source: ollama, id: "qwen3:30b", name: "Qwen3 30B-A3B (MoE)", size_gb: 18.56, params_b: 30, blurb: "MoE: big-model quality, small-model speed."}
+  - {source: ollama, id: "gpt-oss:20b", name: "gpt-oss 20B", size_gb: 13.79, params_b: 21, moe: true, blurb: "OpenAI's open-weight reasoning model."}
+  - {source: ollama, id: "qwen3:30b", name: "Qwen3 30B-A3B (MoE)", size_gb: 18.56, params_b: 30, moe: true, blurb: "MoE: big-model quality, small-model speed."}
   - {source: ollama, id: "gemma3:27b", name: "Gemma 3 27B", size_gb: 17.41, params_b: 27, blurb: "Vision-capable, multilingual."}
   - {source: ollama, id: "qwen3:14b", name: "Qwen3 14B", size_gb: 9.28, params_b: 14.8, blurb: "Great all-rounder that fits one T4."}
   - {source: ollama, id: "qwen2.5-coder:14b", name: "Qwen2.5 Coder 14B", size_gb: 8.99, params_b: 14.8, blurb: "Coding specialist."}
@@ -17,7 +17,8 @@ text:
   - {source: ollama, id: "llama3.1:8b", name: "Llama 3.1 8B", size_gb: 4.92, params_b: 8, blurb: "Classic, widely supported."}
   - {source: ollama, id: "gemma3:4b", name: "Gemma 3 4B", size_gb: 3.35, params_b: 4.3, blurb: "Small and quick, with vision."}
   - {source: ollama, id: "nomic-embed-text:latest", name: "Nomic Embed Text", size_gb: 0.27, params_b: 0.137, blurb: "Embeddings for RAG (/v1/embeddings).", tags: [embedding]}
-  - {source: ollama, id: "qwen3:0.6b", name: "Qwen3 0.6B", size_gb: 0.52, params_b: 0.6, blurb: "Tiny; good for testing the pipeline.", selftest: true}
+  - {source: ollama, id: "qwen3:0.6b", name: "Qwen3 0.6B", size_gb: 0.52, params_b: 0.6, blurb: "Tiny; good for testing the pipeline.", selftest: true,
+     presets: [{name: "Small test", engine: ollama, ctx: 4096, lifecycle: direct, note: "Values the built-in selftest deploys."}]}
 
 image:
   - {source: hf, id: "stabilityai/sdxl-turbo", name: "SDXL Turbo", size_gb: 6.9, largest_gb: 5.1, engine: diffusers, blurb: "Images in 1–4 steps at 512px.", options: {steps: 2, guidance: 0.0, width: 512, height: 512}}
@@ -25,10 +26,12 @@ image:
   - {source: hf, id: "black-forest-labs/FLUX.1-schnell", name: "FLUX.1 schnell", size_gb: 33.7, largest_gb: 23.8, engine: diffusers, gated: true, blurb: "Top-tier quality in 4 steps; 4-bit + offload on T4.", options: {steps: 4, guidance: 0.0, width: 1024, height: 1024, quantize: nf4}}
   - {source: hf, id: "stabilityai/stable-diffusion-3.5-medium", name: "SD 3.5 Medium", size_gb: 16.3, largest_gb: 9.8, engine: diffusers, gated: true, blurb: "Good prompt following; uses offload on T4.", options: {steps: 28, guidance: 4.5, width: 1024, height: 1024}}
   - {source: hf, id: "Lykon/dreamshaper-8", name: "DreamShaper 8 (SD1.5)", size_gb: 2.0, largest_gb: 1.7, engine: diffusers, blurb: "Light SD1.5 fine-tune, very fast.", options: {steps: 25, guidance: 7.0, width: 512, height: 512}}
-  - {source: hf, id: "stabilityai/sd-turbo", name: "SD Turbo", size_gb: 2.6, largest_gb: 1.7, engine: diffusers, blurb: "Tiny 1-step model, good for testing.", selftest: true, options: {steps: 1, guidance: 0.0, width: 512, height: 512}}
+  - {source: hf, id: "stabilityai/sd-turbo", name: "SD Turbo", size_gb: 2.6, largest_gb: 1.7, engine: diffusers, blurb: "Tiny 1-step model, good for testing.", selftest: true, options: {steps: 1, guidance: 0.0, width: 512, height: 512},
+     presets: [{name: "One-step 512px", engine: diffusers, note: "Values the built-in selftest deploys."}]}
 
 video:
-  - {source: hf, id: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", name: "Wan 2.1 T2V 1.3B", size_gb: 16.5, largest_gb: 11.4, engine: diffusers_video, selftest: true, blurb: "Best small text-to-video; offloads the big text encoder.", options: {frames: 33, width: 832, height: 480, steps: 30, fps: 16}}
+  - {source: hf, id: "Wan-AI/Wan2.1-T2V-1.3B-Diffusers", name: "Wan 2.1 T2V 1.3B", size_gb: 16.5, largest_gb: 11.4, engine: diffusers_video, selftest: true, blurb: "Best small text-to-video; offloads the big text encoder.", options: {frames: 33, width: 832, height: 480, steps: 30, fps: 16},
+     presets: [{name: "33 frames 832×480", engine: diffusers_video, note: "Values the built-in selftest deploys."}]}
   - {source: hf, id: "zai-org/CogVideoX-2b", name: "CogVideoX 2B", size_gb: 13.5, largest_gb: 9.5, engine: diffusers_video, blurb: "fp16-native, so it runs well on T4.", options: {frames: 25, width: 720, height: 480, steps: 30, fps: 8}}
   - {source: hf, id: "Lightricks/LTX-Video", name: "LTX-Video 2B", size_gb: 13.8, largest_gb: 9.5, engine: diffusers_video, blurb: "Fast DiT video model.", options: {frames: 49, width: 704, height: 480, steps: 30, fps: 24}}
   - {source: hf, id: "Wan-AI/Wan2.2-TI2V-5B-Diffusers", name: "Wan 2.2 TI2V 5B", size_gb: 21.0, largest_gb: 11.4, engine: diffusers_video, blurb: "Text or image to video; heavier.", options: {frames: 33, width: 704, height: 480, steps: 30, fps: 24}}
@@ -49,8 +52,10 @@ stt:
   - {source: hf, id: "Systran/faster-whisper-large-v3", name: "Whisper large-v3 (faster-whisper)", size_gb: 3.1, engine: faster_whisper, blurb: "Most accurate Whisper."}
   - {source: hf, id: "openai/whisper-large-v3-turbo", name: "Whisper large-v3 turbo (transformers)", size_gb: 1.6, engine: transformers_asr, blurb: "Reference implementation."}
   - {source: hf, id: "Systran/faster-whisper-small", name: "Whisper small (faster-whisper)", size_gb: 0.48, engine: faster_whisper, blurb: "Quick and light."}
-  - {source: hf, id: "Systran/faster-whisper-tiny", name: "Whisper tiny (faster-whisper)", size_gb: 0.08, engine: faster_whisper, blurb: "Smallest; good for testing.", selftest: true}
+  - {source: hf, id: "Systran/faster-whisper-tiny", name: "Whisper tiny (faster-whisper)", size_gb: 0.08, engine: faster_whisper, blurb: "Smallest; good for testing.", selftest: true,
+     presets: [{name: "Selftest default", engine: faster_whisper, note: "Values the built-in selftest deploys."}]}
 
 world:
-  - {source: hf, id: "Etched/oasis-500m", name: "Oasis 500M", size_gb: 2.3, params_b: 0.5, engine: world_recipe, recipe: oasis, blurb: "Action-conditioned Minecraft world model (keyboard → frames).", experimental: true, selftest: true, min_vram_gb: 6}
+  - {source: hf, id: "Etched/oasis-500m", name: "Oasis 500M", size_gb: 2.3, params_b: 0.5, engine: world_recipe, recipe: oasis, blurb: "Action-conditioned Minecraft world model (keyboard → frames).", experimental: true, selftest: true, min_vram_gb: 6,
+     presets: [{name: "Selftest default", engine: world_recipe, note: "Values the built-in selftest deploys."}]}
   - {source: hf, id: "Skywork/Matrix-Game-2.0", name: "Matrix-Game 2.0", size_gb: 21.0, engine: world_recipe, recipe: matrix_game_2, blurb: "Interactive world model built on Wan 2.1. Heavy, unverified on T4.", experimental: true, min_vram_gb: 22}

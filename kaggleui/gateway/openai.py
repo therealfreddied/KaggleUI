@@ -12,6 +12,7 @@ from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
 from .common import SSE_HEADERS, GatewayError, check_access, find, openai_error, sse_openai, state_of, wrap
+from .reasoning import normalize_response, normalize_stream
 
 router = APIRouter()
 
@@ -161,13 +162,28 @@ async def list_models(request: Request):
     except GatewayError as e:
         return openai_error(e)
     deps = state_of(request).manager.ready()
+    # Models llama-swap can cold-load are discoverable before they are deployed; agents rely on
+    # /v1/models to pick one, so list them here alongside the live deployments.
+    swappable: list[str] = []
+    if any(d.spec.lifecycle == "llama_swap" for d in deps):
+        from ..engines import llamaswap
+
+        live = {d.served_name for d in deps}
+        swappable = [name for name in sorted(llamaswap.listed_models(state_of(request))) if name not in live]
     if request.headers.get("anthropic-version"):
         data = [{"type": "model", "id": d.served_name, "display_name": d.served_name,
                  "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(d.ready_at or d.created_at))}
                 for d in deps if d.spec.modality == "text"]
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        data += [{"type": "model", "id": name, "display_name": name, "created_at": stamp}
+                 for name in swappable]
         return {"data": data, "has_more": False, "first_id": data[0]["id"] if data else None,
                 "last_id": data[-1]["id"] if data else None}
-    return {"object": "list", "data": [_model_entry(d) for d in deps]}
+    created = int(time.time())
+    data = [_model_entry(d) for d in deps]
+    data += [{"id": name, "object": "model", "created": created, "owned_by": "kaggleui",
+              "modality": "text", "capabilities": [], "reasoning": None} for name in swappable]
+    return {"object": "list", "data": data}
 
 
 @router.get("/v1/models/{model_id:path}")
@@ -191,9 +207,9 @@ async def chat_completions(request: Request):
         assert dep.backend
         optimize = state_of(request).optimize
         if body.get("stream"):
-            return StreamingResponse(sse_openai(optimize.chat_stream(dep, body), dep.served_name),
+            return StreamingResponse(sse_openai(normalize_stream(optimize.chat_stream(dep, body)), dep.served_name),
                                      media_type="text/event-stream", headers=SSE_HEADERS)
-        return await optimize.chat(dep, body)
+        return normalize_response(await optimize.chat(dep, body))
     except Exception as e:  # noqa: BLE001
         return openai_error(wrap(e))
 

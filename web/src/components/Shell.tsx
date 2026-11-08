@@ -1,4 +1,4 @@
-import { GitBranch, Boxes, CornerDownLeft, Download, Gauge, HardDrive, KeyRound, LayoutGrid, ListChecks, LogOut, Menu, MessageSquare, Moon, Plus, Search, Server, Sun, Wand2, X } from "lucide-react";
+import { Boxes, CornerDownLeft, Download, Gauge, HardDrive, KeyRound, LayoutGrid, ListChecks, LogOut, Menu, MessageSquare, Moon, Plus, Search, Server, Sun, Terminal, Wand2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
@@ -15,14 +15,14 @@ const NAV = [
   { to: "/", label: "Overview", icon: LayoutGrid, end: true },
   { to: "/models", label: "Models", icon: Boxes },
   { to: "/imports", label: "Imports", icon: Download },
-  { to: "/storage", label: "Storage", icon: HardDrive },
-  { to: "/workspace", label: "Workspace", icon: GitBranch },
+  { to: "/backup", label: "Backup", icon: HardDrive },
   { to: "/deployments", label: "Deployments", icon: Server },
   { to: "/studio", label: "Studio", icon: MessageSquare },
   { to: "/access", label: "Access & API", icon: KeyRound },
   { to: "/create", label: "Model Studio", icon: Wand2 },
   { to: "/jobs", label: "Jobs", icon: ListChecks },
   { to: "/system", label: "System", icon: Gauge },
+  { to: "/console", label: "Console", icon: Terminal },
 ];
 
 /** Wordmark: three level bars, the shortest lit, like a meter at rest. */

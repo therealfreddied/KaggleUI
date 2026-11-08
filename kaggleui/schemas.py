@@ -11,7 +11,7 @@ from .catalog.categories import audio_family
 Modality = Literal["text", "image", "video", "tts", "audio", "stt", "world", "mesh"]
 MODALITIES: tuple[str, ...] = ("text", "image", "video", "tts", "audio", "stt", "world", "mesh")
 
-InterfaceKind = Literal["studio", "gradio", "openwebui", "comfyui", "none"]
+InterfaceKind = Literal["studio", "gradio", "openwebui", "comfyui", "overtchat", "none"]
 TunnelProvider = Literal["cloudflare", "cloudflare_named", "ngrok", "none"]
 
 
@@ -54,6 +54,8 @@ class OptimizationProfile(BaseModel):
     context_strategy: Literal["head", "tail", "middle", "balanced"] = "balanced"
     output_headroom_margin: int = 256
     terse_replies: bool = False
+    system_prompt: str = ""
+    """Default system prompt for models that set none in their own options."""
 
 
 class CacheProfile(BaseModel):
@@ -192,6 +194,18 @@ class WorkspaceSettings(BaseModel):
     auto_start_set: bool = False
     publish_discovery: bool = False
 
+class QuotaSettings(BaseModel):
+    """User-entered budgets; usage itself is measured from the ledger on disk."""
+
+    weekly_gpu_hours: float = 30.0
+    weekly_tpu_hours: float = 20.0
+    week_resets: Literal["monday"] = "monday"
+
+class FeedSettings(BaseModel):
+    """Hugging Face repos pinned on the dashboard. Metadata is fetched, never stored."""
+
+    favorites: list[str] = Field(default_factory=list)
+
 class Settings(BaseModel):
     access: AccessSettings = Field(default_factory=AccessSettings)
     api: ApiSettings = Field(default_factory=ApiSettings)
@@ -201,6 +215,8 @@ class Settings(BaseModel):
     cache: CacheProfile = Field(default_factory=CacheProfile)
     ml: MLSettings = Field(default_factory=MLSettings)
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
+    quota: QuotaSettings = Field(default_factory=QuotaSettings)
+    feed: FeedSettings = Field(default_factory=FeedSettings)
 
 
 class Preset(BaseModel):
@@ -220,6 +236,8 @@ class SettingsPatch(BaseModel):
     cache: dict[str, Any] | None = None
     ml: dict[str, Any] | None = None
     workspace: dict[str, Any] | None = None
+    quota: dict[str, Any] | None = None
+    feed: dict[str, Any] | None = None
 
 class WorkspaceMeta(BaseModel):
     schema_version: int = 1
@@ -241,6 +259,20 @@ class WorkspaceArtifactRef(BaseModel):
     files: int = 0
     size: int = 0
 
+class BenchmarkRecord(BaseModel):
+    """One completed benchmark run, derived from its ``export`` artifact."""
+
+    deployment: str
+    model_rev: str
+    engine: str
+    created_at: float
+    runs_per_point: int = 1
+    best_tokens_per_s: float = 0.0
+    best_ttft_s: float = 0.0
+    rows: int = 0
+    artifact_id: str = ""
+    version: str = ""
+
 class WorkspaceDocument(BaseModel):
     """Portable configuration. Runtime state (pids, ports, URLs, GPU claims) is never included."""
 
@@ -252,3 +284,4 @@ class WorkspaceDocument(BaseModel):
     storage_connections: list[StorageConnection] = Field(default_factory=list)
     artifacts: list[WorkspaceArtifactRef] = Field(default_factory=list)
     secret_requirements: list[SecretRequirement] = Field(default_factory=list)
+    benchmarks: list[BenchmarkRecord] = Field(default_factory=list)

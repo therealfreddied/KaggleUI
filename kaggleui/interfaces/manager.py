@@ -1,9 +1,10 @@
-"""Optional front-ends per deployment: Gradio (in-process proxy), Open WebUI and ComfyUI (own port + tunnel)."""
+"""Optional front-ends per deployment: Gradio (in-process proxy), Open WebUI, ComfyUI and OvertChat."""
 
 from __future__ import annotations
 
 import asyncio
 import re
+import secrets
 import sys
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,35 @@ if TYPE_CHECKING:
     from ..server.state import AppState
 
 SHARE_RE = re.compile(r"https://[a-z0-9-]+\.gradio\.live")
+
+# OvertChat keeps its model list in SQLite (no env-var provider config), so the deployment is
+# registered by inserting a row after migrations have run. Columns are introspected so a schema
+# change degrades to the manual Settings → Models path instead of writing a bad row.
+OVERTCHAT_SEED_JS = """\
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const Database = require("better-sqlite3");
+const [dbPath, baseUrl, apiKey, model] = process.argv.slice(2);
+const db = new Database(dbPath);
+const columns = new Set(db.prepare("PRAGMA table_info(model_configs)").all().map((c) => c.name));
+if (!columns.has("id")) {
+  console.error("model_configs table missing");
+  process.exit(2);
+}
+const now = Date.now();
+const row = {
+  id: "kaggleui", label: model, model_type: "chat", provider_id: "custom", api_format: "openai-chat",
+  base_url: baseUrl, api_key: apiKey, model, tool_calling_enabled: 1, enabled: 1, task_model: 0,
+  credential_scope: "shared", sort_order: 0, created_at: now, updated_at: now,
+};
+const use = Object.keys(row).filter((k) => columns.has(k));
+const updates = use.filter((k) => k !== "id").map((k) => `${k}=excluded.${k}`).join(", ");
+db.prepare(
+  `INSERT INTO model_configs (${use.join(",")}) VALUES (${use.map(() => "?").join(",")})
+   ON CONFLICT(id) DO UPDATE SET ${updates}`,
+).run(...use.map((k) => row[k]));
+db.close();
+"""
 
 
 class InterfaceManager:
@@ -38,6 +68,8 @@ class InterfaceManager:
                 await self._openwebui(dep, ctx)
             elif kind == "comfyui":
                 await self._comfyui(dep, ctx)
+            elif kind == "overtchat":
+                await self._overtchat(dep, ctx)
             dep.interface["status"] = "up"
         except DeployError as e:
             dep.interface.update(status="error", error=str(e))
@@ -149,6 +181,92 @@ class InterfaceManager:
         await self._wait_http(f"http://127.0.0.1:{port}/health", proc, "Open WebUI")
         dep.interface["url"] = await self._serve_proxy(dep, port, "Open WebUI")
         dep.interface["local_port"] = port
+
+    # -- OvertChat ----------------------------------------------------------------------------
+    @staticmethod
+    async def _node_version() -> tuple[int, int] | None:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "node", "--version", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
+            out, _ = await proc.communicate()
+        except OSError:
+            return None
+        match = re.match(r"v(\d+)\.(\d+)", out.decode("utf-8", "replace").strip())
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    async def _overtchat(self, dep: Deployment, ctx: EngineContext) -> None:
+        if dep.spec.modality != "text":
+            raise DeployError("OvertChat is for text models")
+        version = await self._node_version()
+        if version is None:
+            raise DeployError("OvertChat needs Node.js 20.9+; node was not found on PATH")
+        if version < (20, 9):
+            raise DeployError(f"OvertChat needs Node.js 20.9+ (this host has {version[0]}.{version[1]})")
+        src = ctx.paths.envs / "src" / "overtchat"
+        build_env = {**ctx.env(), "CI": "1", "NEXT_TELEMETRY_DISABLED": "1", "DISABLE_UPDATE_CHECK": "1"}
+        if not (src / "package.json").exists():
+            src.parent.mkdir(parents=True, exist_ok=True)
+            ctx.progress("downloading", None, "Cloning OvertChat")
+            code = await run_cmd(["git", "clone", "--depth", "1", "https://github.com/yoloyash/overtchat",
+                                  str(src)], env=build_env, on_line=ctx.log)
+            if code != 0:
+                raise DeployError(f"Couldn't clone OvertChat (git exited {code}); see the deployment log")
+        if not (src / ".kui-build").exists():
+            ctx.progress("downloading", None, "Installing OvertChat dependencies (npm ci)")
+            code = await run_cmd(["npm", "ci", "--no-audit", "--no-fund"], env=build_env, cwd=src,
+                                 on_line=ctx.log)
+            if code != 0:
+                raise DeployError("OvertChat dependency install failed; see the deployment log")
+            ctx.progress("downloading", None, "Building OvertChat (next build)")
+            code = await run_cmd(["npm", "run", "build", "-w", "@overtchat/web"], env=build_env, cwd=src,
+                                 on_line=ctx.log)
+            if code != 0:
+                raise DeployError("OvertChat build failed; see the deployment log")
+            (src / ".kui-build").write_text("built\n", encoding="utf-8")
+        data = ctx.paths.home / "overtchat"
+        data.mkdir(parents=True, exist_ok=True)
+        secret_file = data / "auth_secret"
+        if not secret_file.exists():
+            secret_file.write_text(secrets.token_hex(32), encoding="utf-8")
+            secret_file.chmod(0o600)
+        port = free_port()
+        base_url = f"http://127.0.0.1:{self.state.port}/v1"
+        env = {
+            **ctx.env(),
+            "DATABASE_URL": str(data / "chat.db"),
+            "BETTER_AUTH_URL": f"http://127.0.0.1:{port}",
+            "BETTER_AUTH_SECRET": secret_file.read_text(encoding="utf-8").strip(),
+            "DISABLE_UPDATE_CHECK": "1",
+            "NEXT_TELEMETRY_DISABLED": "1",
+        }
+        next_bin = src / "node_modules" / "next" / "dist" / "bin" / "next"
+        if not next_bin.exists():
+            next_bin = src / "apps" / "web" / "node_modules" / "next" / "dist" / "bin" / "next"
+        if not next_bin.exists():
+            raise DeployError("OvertChat installed without a Next.js binary; delete "
+                              f"{src} and deploy again")
+        proc = ManagedProcess(f"overtchat-{dep.id}", ["node", str(next_bin), "start", "-p", str(port)],
+                              env=env, cwd=src / "apps" / "web",
+                              log_path=ctx.paths.logs / f"{dep.id}-overtchat.log",
+                              on_line=lambda line: ctx.log(f"[overtchat] {line}"))
+        dep.processes.append(proc)
+        dep.interface["message"] = "Starting OvertChat"
+        await proc.start()
+        await self._wait_http(f"http://127.0.0.1:{port}/", proc, "OvertChat", timeout=600)
+        await self._seed_overtchat(ctx, src, data / "chat.db", base_url, dep.served_name)
+        dep.interface["url"] = await self._serve_proxy(dep, port, "OvertChat")
+        dep.interface["local_port"] = port
+
+    async def _seed_overtchat(self, ctx: EngineContext, src, db, base_url: str, model: str) -> None:
+        """Register the deployment as a Chat Completions model in OvertChat's SQLite database."""
+        script = src / "kui-seed.mjs"
+        script.write_text(OVERTCHAT_SEED_JS, encoding="utf-8")
+        code = await run_cmd(["node", str(script), str(db), base_url, self.state.auth.internal_key, model],
+                             env=ctx.env(), cwd=src, on_line=ctx.log)
+        if code != 0:
+            ctx.log("OvertChat is running, but the model wasn't registered automatically. "
+                    f"Add it under Settings → Models: base URL {base_url}, "
+                    f"API key {self.state.auth.internal_key}, model {model}")
 
     # -- ComfyUI ------------------------------------------------------------------------------
     async def _comfyui(self, dep: Deployment, ctx: EngineContext) -> None:

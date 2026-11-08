@@ -55,6 +55,14 @@ What the launcher guarantees:
 
 The panel is protected by an admin token and an optional access password. Clients use the API key for `/v1`, `/api`, and media endpoints. Tokens and passwords can be regenerated from Settings; local secrets are stored with `0600` permissions and are never echoed back by the API.
 
+Notebook sessions are ephemeral, so `launch()` can carry the workspace across them:
+
+```python
+kaggleui.launch(workspace={"enabled": True, "restore_on_launch": True, "auto_backup": True})
+```
+
+`workspace` is written into the persisted settings before the server boots, so the first thing a fresh session does is restore the workspace document from GitHub — deployments, favorites, benchmarks, and settings — and every later change is pushed back. `KAGGLEUI_WORKSPACE_REPO` (`owner/repo`) supplies the repository when the dict does not name one, on Kaggle via Notebook Secrets and on Colab via the key icon; `KAGGLEUI_WORKSPACE_PATH` and `KAGGLEUI_WORKSPACE_BRANCH` override the folder and branch. `GITHUB_TOKEN` stays a secret reference and is never written to the document or the repository. No repository means no sync, and a missing or rejected token fails the sync call without blocking startup.
+
 `kaggleui stop` stops the background server. `kaggleui launch --no-block` starts it without holding the cell. `kaggleui selftest` deploys one model per modality and exercises the APIs; it is the end-to-end smoke test used by CI.
 
 ## 2. Model catalog and fit
@@ -67,6 +75,10 @@ The Models tab merges four sources:
 - **Attached models** found under the Kaggle input directory or an explicit local path, including GGUF files.
 
 Curated results stay usable offline. Live sources are best effort; a failed Hub or Ollama lookup removes that source, not the page.
+
+A curated entry may carry `presets`: named engine/context/lifecycle combinations the detail view offers as one click. Presets ship only for models the built-in selftest actually deploys. Text base repos expose `finetune: true`, which marks them as Model Studio training inputs.
+
+The Dashboard's favorites feed stores only repo ids (`Settings.feed`), so a workspace backup carries them; download and last-modified numbers are fetched per repo with a 10-minute cache, and a repo that fails to resolve shows its error instead of disappearing.
 
 ### Default view
 
@@ -130,6 +142,7 @@ Engine dispatch is explicit:
 |---|---|---|
 | `ollama` | Text, embeddings, some vision | Uses the Ollama server and local model store. |
 | `llamacpp` | GGUF text models | Native runner, optional llama-swap lifecycle, explicit placement. |
+| `bigmoe` | MoE GGUF text models | Pinned BigMoeOnEdge release; streams routed experts from disk so a MoE model bigger than VRAM still serves. Linux x86_64/aarch64 only; refuses dense GGUFs. |
 | `vllm` | High-throughput text serving | Separate virtual environment; GPU required. |
 | `sglang` | High-throughput text serving | Separate virtual environment; GPU required. |
 | `transformers` | Text fallback | Worker process; broad architecture coverage. |
@@ -210,6 +223,8 @@ Additional jobs:
 - **Teacher datasets** are generated only by deployments the user runs. KaggleUI never calls a paid teacher API.
 - **Abliteration / edit** reuses the import pipeline and registers the result as a model artifact.
 - **Benchmark** measures TTFT and tokens/s across context sizes and prompt lengths with `kaggleui bench`.
+- **Forge** (`/workbench/ml/forge`) chains train → evaluate → edit → convert → deploy as one job, with per-stage toggles for abliteration, blind edit, quantisation, and deploying the result. Guardrails run at start and before every stage.
+- **Benchmark records** are derived from the workbench's export artifacts, so the Deployments page and workspace backups read the same measurements.
 - **Artifacts** can be verified, exported, and deleted; provenance records the parent model, dataset, recipe, and job.
 
 Job states are `queued`, `running`, `succeeded`, `failed`, `cancelled`, and `interrupted`. Children emit progress as `KUI_EVENT` lines, which the runner parses into durable events. The workbench uses SQLite under `KAGGLEUI_HOME`, so a server restart does not lose queued work.
@@ -311,6 +326,11 @@ WebSocket routes are not decorators in the generated table:
 | `GET` | `/_kui/api/catalog/original` |
 | `GET` | `/_kui/api/catalog/search` |
 | `POST` | `/_kui/api/credentials/regenerate` |
+| `GET` | `/_kui/api/benchmarks` |
+| `POST` | `/_kui/api/benchmarks` |
+| `GET` | `/_kui/api/feed` |
+| `POST` | `/_kui/api/feed` |
+| `DELETE` | `/_kui/api/feed/{repo:path}` |
 | `GET` | `/_kui/api/deployments` |
 | `POST` | `/_kui/api/deployments` |
 | `DELETE` | `/_kui/api/deployments/{dep_id}` |
@@ -449,6 +469,9 @@ WebSocket routes are not decorators in the generated table:
 | `POST` | `/workbench/ml/edit` |
 | `GET` | `/workbench/ml/harness` |
 | `POST` | `/workbench/ml/harness` |
+| `GET` | `/workbench/ml/forge` |
+| `POST` | `/workbench/ml/forge` |
+| `POST` | `/workbench/ml/forge/{job_id}/cancel` |
 | `GET` | `/workbench/ml/harness/{artifact_id}` |
 | `POST` | `/workbench/ml/merge` |
 | `POST` | `/workbench/ml/quantize` |

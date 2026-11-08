@@ -38,6 +38,119 @@ function jobLine(job: Job | undefined) {
   return `${job.kind} ${job.state}${job.error ? `: ${job.error}` : job.message ? `: ${job.message}` : ""}`;
 }
 
+type BackendField = { key: string; label: string; placeholder?: string; secret?: boolean };
+
+// Only backends rclone can configure without a browser round-trip; OAuth ones need `rclone config`.
+const RCLONE_BACKENDS: { value: string; label: string; fields: BackendField[] }[] = [
+  { value: "s3", label: "S3 / R2 / MinIO", fields: [
+    { key: "access_key_id", label: "Access key" },
+    { key: "secret_access_key", label: "Secret key", secret: true },
+    { key: "endpoint", label: "Endpoint", placeholder: "https://s3.example.com" },
+    { key: "region", label: "Region", placeholder: "us-east-1" },
+  ] },
+  { value: "b2", label: "Backblaze B2", fields: [
+    { key: "account", label: "Key ID" },
+    { key: "key", label: "Application key", secret: true },
+  ] },
+  { value: "sftp", label: "SFTP", fields: [
+    { key: "host", label: "Host" },
+    { key: "user", label: "User" },
+    { key: "pass", label: "Password", secret: true },
+    { key: "key_file", label: "Key file", placeholder: "~/.ssh/id_ed25519" },
+  ] },
+  { value: "webdav", label: "WebDAV", fields: [
+    { key: "url", label: "URL", placeholder: "https://dav.example.com" },
+    { key: "vendor", label: "Vendor", placeholder: "other" },
+    { key: "user", label: "User" },
+    { key: "pass", label: "Password", secret: true },
+  ] },
+];
+
+function Remotes() {
+  const cache = useQueryClient();
+  const toast = useToast();
+  const remotes = useQuery({ queryKey: ["rclone-remotes"], queryFn: api.rcloneRemotes, retry: false });
+  const [backend, setBackend] = useState("s3");
+  const [name, setName] = useState("");
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const spec = RCLONE_BACKENDS.find((b) => b.value === backend) ?? RCLONE_BACKENDS[0];
+
+  if (remotes.error) {
+    return (
+      <div className="panel p-5">
+        <h3 className="text-[16px] font-semibold">rclone remotes</h3>
+        <p className="mt-2 text-[13px] text-fg-2">{remotes.error instanceof Error ? remotes.error.message : String(remotes.error)}</p>
+      </div>
+    );
+  }
+
+  async function add(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      await api.createRcloneRemote({ name, backend, params: values });
+      await cache.invalidateQueries({ queryKey: ["rclone-remotes"] });
+      toast(`Configured ${name}: — connect it under Destinations`);
+      setName(""); setValues({});
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Couldn't create the remote", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="panel p-5">
+      <h3 className="text-[16px] font-semibold">rclone remotes</h3>
+      <p className="mt-1 max-w-[65ch] text-[13px] text-fg-2">
+        Credentials for rclone's own config, written non-interactively. Then add a destination whose remote is
+        <span className="font-mono"> name:path</span>.
+      </p>
+      {(remotes.data?.remotes ?? []).length === 0 ? (
+        <p className="mt-4 text-[13px] text-fg-3">No remotes configured.</p>
+      ) : (
+        <ul className="mt-4 divide-y divide-line">
+          {(remotes.data?.remotes ?? []).map((remote) => (
+            <li key={remote.name} className="flex flex-wrap items-center gap-2 py-2.5">
+              <span className="font-medium">{remote.name}</span>
+              <Chip>{remote.options.type ?? "rclone"}</Chip>
+              <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-3">
+                {Object.entries(remote.options).filter(([k]) => k !== "type").map(([k, v]) => `${k}=${v}`).join("  ")}
+              </span>
+              <Button variant="ghost" onClick={async () => {
+                if (!window.confirm(`Delete the rclone remote ${remote.name}?`)) return;
+                try {
+                  await api.deleteRcloneRemote(remote.name);
+                  await cache.invalidateQueries({ queryKey: ["rclone-remotes"] });
+                  toast(`Deleted ${remote.name}`);
+                } catch (error) { toast(error instanceof Error ? error.message : "Couldn't delete", "error"); }
+              }}><Trash2 className="size-4" /> Delete</Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="mt-4 grid gap-3 border-t border-line pt-4 sm:grid-cols-2" onSubmit={add}>
+        <Field label="Name" hint="Letters, digits, - and _ only.">
+          <Input required value={name} onChange={(e) => setName(e.target.value)} placeholder="archive" />
+        </Field>
+        <Field label="Backend">
+          <Select value={backend} onChange={(e) => { setBackend(e.target.value); setValues({}); }}>
+            {RCLONE_BACKENDS.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
+          </Select>
+        </Field>
+        {spec.fields.map((field) => (
+          <Field key={field.key} label={field.label}>
+            <Input value={values[field.key] ?? ""} placeholder={field.placeholder} type={field.secret ? "password" : "text"}
+              onChange={(e) => setValues((prev) => ({ ...prev, [field.key]: e.target.value }))} />
+          </Field>
+        ))}
+        <div className="sm:col-span-2"><Button type="submit" busy={busy}><Plus className="size-4" /> Add remote</Button></div>
+      </form>
+    </div>
+  );
+}
+
 function Connections() {
   const cache = useQueryClient();
   const toast = useToast();
@@ -285,15 +398,13 @@ function Restore() {
   );
 }
 
-export default function Storage() {
+export function StorageSections() {
   return (
-    <div>
-      <SectionTitle title="Storage" description="Durable destinations for models, adapters and datasets." />
-      <div className="max-w-4xl space-y-6">
-        <Connections />
-        <Artifacts />
-        <Restore />
-      </div>
+    <div className="space-y-6">
+      <Remotes />
+      <Connections />
+      <Artifacts />
+      <Restore />
     </div>
   );
 }

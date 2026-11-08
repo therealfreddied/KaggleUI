@@ -17,8 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from .. import __version__
-from .. import secretstore
+from .. import __version__, secretstore
 from ..schemas import WorkspaceDocument
 from .workspace import (
     WorkspaceError,

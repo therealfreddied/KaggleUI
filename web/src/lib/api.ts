@@ -1,9 +1,12 @@
 import type {
   ArtifactManifest,
+  BenchmarkRecord,
   CacheProfile,
   ArtifactVerify,
   DatasetReport,
   EvalReport,
+  FeedEntry,
+  ForgeBody,
   HarnessProfileInfo,
   TrainingRun,
   Assessment,
@@ -18,6 +21,8 @@ import type {
   OptimizationProfile,
   Overview,
   PlacementPreview,
+  QuotaStatus,
+  RcloneRemote,
   SearchResult,
   SecretDetails,
   Session,
@@ -81,7 +86,24 @@ export const api = {
   overview: () => request<Overview>("/_kui/api/overview"),
   updates: (check = false) => request<UpdateStatus>(`/_kui/api/updates?check=${check}`),
   installUpdate: () => request<UpdateStatus>("/_kui/api/updates/install", { method: "POST" }),
+  shutdown: (stopModels = true) =>
+    request<{ status: string; note: string }>("/_kui/api/shutdown", {
+      method: "POST", body: json({ confirm: true, stop_models: stopModels }),
+    }),
+  restart: () =>
+    request<{ status: string; note: string }>("/_kui/api/restart", {
+      method: "POST", body: json({ confirm: true }),
+    }),
   updateLogs: () => request<{ lines: string[] }>("/_kui/api/updates/logs"),
+  benchmarks: () => request<{ benchmarks: BenchmarkRecord[] }>("/_kui/api/benchmarks"),
+  runBenchmark: (body: { deployment_id: string; ctxs?: number[]; prompts?: number[]; runs?: number }) =>
+    request<Job>("/_kui/api/benchmarks", { method: "POST", body: json(body) }),
+  feed: () => request<{ favorites: string[]; entries: FeedEntry[] }>("/_kui/api/feed"),
+  addFeed: (repo: string) =>
+    request<{ favorites: string[] }>("/_kui/api/feed", { method: "POST", body: json({ repo }) }),
+  removeFeed: (repo: string) =>
+    request<{ favorites: string[] }>(`/_kui/api/feed/${encodeURIComponent(repo)}`, { method: "DELETE" }),
+  quota: () => request<QuotaStatus>("/_kui/api/system/quota"),
   updateSettings: (patch: Partial<{ [K in keyof Settings]: Partial<Settings[K]> }>) =>
     request<Settings>("/_kui/api/settings", { method: "PUT", body: json(patch) }),
   regenerate: (which: "password" | "api_key") =>
@@ -175,6 +197,11 @@ export const api = {
   testStorageConnection: (name: string) =>
     request<{ ok: boolean; error?: string; [key: string]: unknown }>(
       `/_kui/api/workbench/storage/${encodeURIComponent(name)}/test`, { method: "POST" }),
+  rcloneRemotes: () => request<{ remotes: RcloneRemote[] }>("/_kui/api/storage/remotes"),
+  createRcloneRemote: (body: { name: string; backend: string; params: Record<string, string> }) =>
+    request<RcloneRemote>("/_kui/api/storage/remotes", { method: "POST", body: json(body) }),
+  deleteRcloneRemote: (name: string) =>
+    request<{ deleted: string }>(`/_kui/api/storage/remotes/${encodeURIComponent(name)}`, { method: "DELETE" }),
   artifacts: () => request<{ artifacts: ArtifactManifest[] }>("/_kui/api/workbench/artifacts"),
   artifact: (id: string, version?: string) =>
     request<ArtifactManifest>(`/_kui/api/workbench/artifacts/${encodeURIComponent(id)}` +
@@ -281,6 +308,11 @@ export const api = {
   edits: () => request<{ jobs: Job[] }>("/_kui/api/workbench/ml/edit"),
   studioEdit: (body: { source_repo: string; method: "quick" | "heretic"; trials?: number; quantize?: boolean; name?: string }) =>
     request<Job>("/_kui/api/workbench/ml/edit", { method: "POST", body: json(body) }),
+  forges: () => request<{ jobs: Job[] }>("/_kui/api/workbench/ml/forge"),
+  startForge: (body: ForgeBody) =>
+    request<Job>("/_kui/api/workbench/ml/forge", { method: "POST", body: json(body) }),
+  cancelForge: (id: string) =>
+    request<Job>(`/_kui/api/workbench/ml/forge/${id}/cancel`, { method: "POST" }),
   harnessProfiles: () => request<{ profiles: HarnessProfileInfo[] }>("/_kui/api/workbench/ml/harness"),
   runHarness: (deployment: string, profile: string) =>
     request<EvalReport>("/_kui/api/workbench/ml/harness", { method: "POST", body: json({ deployment, profile }) }),

@@ -7,7 +7,9 @@ so a typo cannot wipe a bucket. ``rclone sync`` is deliberately absent.
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -33,8 +35,86 @@ def _mtime(value) -> float | None:
         return None
 
 
+_NAME = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+_BACKEND = re.compile(r"^[a-z0-9]{1,20}$")
+_PARAM = re.compile(r"^[a-z0-9_]{1,40}$")
+_SECRET_HINT = re.compile(r"pass|secret|token|key|credential", re.IGNORECASE)
+
+def rclone_installed() -> bool:
+    return shutil.which("rclone") is not None
+
+def rclone_env(config_file: Path | None = None) -> dict[str, str]:
+    """Environment for one-shot rclone config calls; ``RCLONE_CONFIG`` selects the file we manage."""
+    env = dict(os.environ)
+    if config_file is not None:
+        env["RCLONE_CONFIG"] = str(config_file)
+    return env
+
+async def _config_run(args: list[str], env: dict[str, str] | None) -> tuple[int, list[str]]:
+    lines: list[str] = []
+    code = await run_cmd(["rclone", *args], env=env, on_line=lines.append, timeout=60)
+    return code, lines
+
+def _require_name(name: str) -> str:
+    name = (name or "").strip()
+    if not _NAME.match(name):
+        raise StorageError("Remote names are 1-40 letters, digits, '-' or '_'")
+    return name
+
+async def list_remotes(env: dict[str, str] | None = None) -> list[str]:
+    code, lines = await _config_run(["listremotes"], env)
+    if code != 0:
+        raise StorageError("rclone listremotes failed: " + " ".join(lines[-3:]))
+    return sorted(line.strip().rstrip(":") for line in lines if line.strip().endswith(":"))
+
+async def create_remote(env: dict[str, str] | None, name: str, backend: str, params: dict[str, str]) -> str:
+    """Create a remote non-interactively. ``rclone config create`` never prompts when values are given."""
+    name = _require_name(name)
+    if not _BACKEND.match(backend or ""):
+        raise StorageError("Unsupported rclone backend")
+    args = ["config", "create", name, backend]
+    for key, value in params.items():
+        if not _PARAM.match(str(key)):
+            raise StorageError(f"Invalid rclone option {key!r}")
+        text = str(value or "")
+        if "\n" in text or "\r" in text:
+            raise StorageError(f"{key} must be a single line")
+        if text:
+            args.append(f"{key}={text}")
+    code, lines = await _config_run(args, env)
+    if code != 0:
+        raise StorageError("rclone config create failed: " + " ".join(lines[-3:]))
+    return name
+
+async def delete_remote(env: dict[str, str] | None, name: str) -> None:
+    name = _require_name(name)
+    code, lines = await _config_run(["config", "delete", name], env)
+    if code != 0:
+        raise StorageError("rclone config delete failed: " + " ".join(lines[-3:]))
+
+async def reveal_remote(env: dict[str, str] | None, name: str) -> dict[str, str]:
+    """Options for one remote with secrets masked, so the panel can show what is configured."""
+    name = _require_name(name)
+    code, lines = await _config_run(["config", "dump"], env)
+    if code != 0:
+        raise StorageError("rclone config dump failed: " + " ".join(lines[-3:]))
+    try:
+        dump = json.loads("".join(lines) or "{}")
+    except ValueError as exc:
+        raise StorageError("rclone config dump returned unreadable JSON") from exc
+    remote = dump.get(name)
+    if not isinstance(remote, dict):
+        raise StorageError(f"No rclone remote named {name}")
+    shown: dict[str, str] = {}
+    for key, value in remote.items():
+        text = str(value)
+        if _SECRET_HINT.search(key) and text:
+            shown[key] = "…" + text[-4:] if len(text) > 4 else "…"
+        else:
+            shown[key] = text
+    return shown
+
 class RcloneProvider:
-    name = "rclone"
 
     def __init__(self, remote: str, *, config_file: str | None = None, binary: str | None = None, cache: Path | None = None):
         if not remote or ":" not in remote:

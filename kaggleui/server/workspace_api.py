@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import signal
 import time
 from typing import Any
 
 import httpx
+import psutil
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
@@ -22,6 +24,7 @@ from ..deploy.manager import DeployError
 from ..gateway.common import state_of
 from ..schemas import WorkspaceSettings
 from ..storage import StorageError
+from ..storage import rclone as rclone_tools
 from ..util import short_id
 from ..workbench import backup as artifact_backup
 from ..workbench import sync as workspace_sync
@@ -298,7 +301,68 @@ async def _terminate() -> None:
     await asyncio.sleep(0.35)
     os.kill(os.getpid(), signal.SIGTERM)
 
+@router.post("/restart")
+async def restart(request: Request, body: dict[str, Any] | None = None):
+    st = _scope(request, "shutdown")
+    body = body or {}
+    if not body.get("confirm"):
+        raise HTTPException(422, "confirm=true is required; this restarts the KaggleUI server")
+    from ..tunnels.persistent import request_handoff
+    from .restart import prepare
 
+    try:
+        prepare(st)
+        request_handoff(st.paths, psutil.Process())
+    except OSError as exc:
+        raise HTTPException(422, f"Couldn't write the restart files: {exc}") from exc
+    asyncio.create_task(_terminate())
+    return {"status": "restarting",
+            "note": "The public URL is kept. This page reconnects; running models are redeployed."}
+
+
+
+# -- rclone remotes ---------------------------------------------------------------------------
+def _rclone_env(st) -> dict[str, str]:
+    if not rclone_tools.rclone_installed():
+        raise HTTPException(422, "rclone is not installed on this host")
+    return rclone_tools.rclone_env(st.paths.home / "rclone.conf")
+
+@router.get("/storage/remotes")
+async def list_rclone_remotes(request: Request):
+    st = _scope(request, "storage")
+    env = _rclone_env(st)
+    try:
+        names = await rclone_tools.list_remotes(env)
+        remotes = [{"name": name, "options": await rclone_tools.reveal_remote(env, name)} for name in names]
+    except StorageError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"remotes": remotes}
+
+@router.post("/storage/remotes")
+async def create_rclone_remote(request: Request, body: dict[str, Any]):
+    st = _scope(request, "storage")
+    env = _rclone_env(st)
+    params = body.get("params") or {}
+    if not isinstance(params, dict):
+        raise HTTPException(422, "params must be an object")
+    try:
+        name = await rclone_tools.create_remote(env, str(body.get("name") or ""),
+                                                str(body.get("backend") or ""),
+                                                {str(k): str(v) for k, v in params.items()})
+        options = await rclone_tools.reveal_remote(env, name)
+    except StorageError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"name": name, "options": options}
+
+@router.delete("/storage/remotes/{name}")
+async def delete_rclone_remote(request: Request, name: str):
+    st = _scope(request, "storage")
+    env = _rclone_env(st)
+    try:
+        await rclone_tools.delete_remote(env, name)
+    except StorageError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return {"deleted": name}
 
 # -- artifact backup / restore ----------------------------------------------------------------
 def _job_log(st, kind: str):
@@ -384,3 +448,86 @@ def cli_job_log(request: Request, job_id: str, offset: int = 0, limit: int = 200
     from ..workbench.jobs import read_log
 
     return {"job": job.public(), "lines": read_log(job.logs_path, max(0, offset), max(1, min(limit, 2000)))}
+
+# -- Dashboard feed: pinned Hugging Face repos -------------------------------------------------
+FEED_LIMIT = 50
+FEED_TTL = 600.0
+_feed_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+_REPO_RE = re.compile(r"^[A-Za-z0-9][\w.-]*/[\w.-]+$")
+
+
+def _repo_id(raw: str) -> str:
+    value = raw.strip().removeprefix("https://huggingface.co/").removeprefix("http://huggingface.co/")
+    value = value.removeprefix("huggingface.co/").strip("/ ").split("?")[0]
+    if not _REPO_RE.match(value):
+        raise HTTPException(422, f"{raw!r} is not a Hugging Face repo id (owner/name)")
+    return value
+
+
+def _save_feed(st, favorites: list[str]) -> list[str]:
+    from ..schemas import Settings
+
+    data = st.settings.model_dump()
+    data["feed"]["favorites"] = favorites
+    st.settings = Settings.model_validate(data)
+    st.workbench.save_settings(st.settings.model_dump())
+    st.bus.publish("settings", st.settings.model_dump())
+    workspace_sync.schedule_auto_backup(st)
+    return favorites
+
+
+async def _feed_entry(client: httpx.AsyncClient, repo: str) -> dict[str, Any]:
+    cached = _feed_cache.get(repo)
+    if cached and time.time() - cached[0] < FEED_TTL:
+        return cached[1]
+    try:
+        from ..catalog import hf
+
+        info = await hf.model_info(client, repo)
+        entry = {
+            "repo": repo,
+            "id": info.get("id") or repo,
+            "pipeline_tag": info.get("pipeline_tag"),
+            "downloads": info.get("downloads"),
+            "likes": info.get("likes"),
+            "last_modified": hf.parse_time(info.get("lastModified")),
+            "gated": hf.is_gated(info.get("gated")),
+            "private": bool(info.get("private")),
+            "error": None,
+        }
+    except Exception as exc:  # a hub hiccup must not hide the rest of the feed
+        entry = {"repo": repo, "id": repo, "error": f"{type(exc).__name__}: {exc}"}
+    _feed_cache[repo] = (time.time(), entry)
+    return entry
+
+
+@router.get("/feed")
+async def get_feed(request: Request):
+    st = _admin(request)
+    favorites = list(st.settings.feed.favorites)
+    async with httpx.AsyncClient() as client:
+        entries = await asyncio.gather(*(_feed_entry(client, repo) for repo in favorites))
+    return {"favorites": favorites, "entries": entries}
+
+
+@router.post("/feed")
+async def add_feed(request: Request):
+    st = _admin(request)
+    body = await request.json()
+    repo = _repo_id(str(body.get("repo") or ""))
+    favorites = list(st.settings.feed.favorites)
+    if repo.lower() not in {f.lower() for f in favorites}:
+        if len(favorites) >= FEED_LIMIT:
+            raise HTTPException(409, f"the feed holds at most {FEED_LIMIT} repos; remove one first")
+        favorites.append(repo)
+    _feed_cache.pop(repo, None)
+    return {"favorites": _save_feed(st, favorites)}
+
+
+@router.delete("/feed/{repo:path}")
+def remove_feed(request: Request, repo: str):
+    st = _admin(request)
+    target = repo.lower()
+    favorites = [f for f in st.settings.feed.favorites if f.lower() != target]
+    _feed_cache.pop(repo, None)
+    return {"favorites": _save_feed(st, favorites)}

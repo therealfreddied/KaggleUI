@@ -262,7 +262,7 @@ class DeploymentManager:
             dep.ready_at = time.time()
             self._log(dep, f"Ready as '{dep.served_name}'")
             self._emit(dep, force=True)
-            if dep.spec.interface in ("gradio", "openwebui"):
+            if dep.spec.interface in ("gradio", "openwebui", "overtchat"):
                 await st.interfaces.start(dep, ctx)
                 self._emit(dep, force=True)
         except asyncio.CancelledError:

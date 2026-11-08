@@ -12,7 +12,7 @@ import { FitGauge } from "./meters";
 import { ModelLogo } from "./ModelLogo";
 import { CapabilityTags } from "./CapabilityTags";
 import { effortLabel } from "../lib/capabilities";
-import { Button, Field, Input, Select, Toggle, VerdictTag } from "./ui";
+import { Button, Field, Input, Select, Textarea, Toggle, VerdictTag } from "./ui";
 
 export interface ModelChoice {
   item: CatalogItem;
@@ -219,7 +219,22 @@ export function ModelDetail({
   const [variant, setVariant] = useState<string | null>(base.variant);
   const [engine, setEngine] = useState<string | null>(base.engine);
   const [options, setOptions] = useState<Record<string, any>>({ ...(base.spec?.options ?? {}) });
+  const [swap, setSwap] = useState(base.spec?.lifecycle === "llama_swap");
   const [name, setName] = useState("");
+
+  // Server-side serving options live in the same free-form dict as engine options.
+  const setOption = (key: string, value: unknown) =>
+    setOptions((o) => {
+      const next = { ...o };
+      if (value === undefined || value === "" || value === "inherit") delete next[key];
+      else next[key] = value;
+      return next;
+    });
+  const compress = Array.isArray(options.compress) ? (options.compress as string[]) : [];
+  const toggleCompress = (kind: string) =>
+    setOption("compress", compress.includes(kind)
+      ? compress.filter((k) => k !== kind)
+      : [...compress, kind]);
 
   useEffect(() => {
     if (detail.data) {
@@ -229,9 +244,11 @@ export function ModelDetail({
   }, [detail.data]);
 
   const engines = useMemo(() => {
+    // BigMoeOnEdge only pays off when the experts cannot sit in VRAM, and only for a MoE GGUF.
+    const streamable = item.moe && (item.fit.mode === "cpu" || item.fit.mode === "gpu_cpu");
     if (item.modality === "text") {
       // Every GGUF model runs on either runner; both are real choices with different strengths.
-      if (item.engine === "ollama") return ["ollama", "llamacpp"];
+      if (item.engine === "ollama") return ["ollama", "llamacpp", ...(streamable ? ["bigmoe"] : [])];
       if (item.source === "hf") return pool?.tpu ? ["vllm", "transformers"] : ["vllm", "sglang", "transformers"];
     }
     return item.engine ? [item.engine] : [];
@@ -264,6 +281,7 @@ export function ModelDetail({
           ...item.spec,
           model: { ...item.spec.model, variant: variant ?? item.spec.model.variant, engine: engine ?? item.spec.model.engine },
           name: name.trim() || null,
+          lifecycle: (engine ?? item.engine) === "llamacpp" && swap ? "llama_swap" : "direct",
           options: Object.fromEntries(
             Object.entries<unknown>({
               ...options,
@@ -282,6 +300,11 @@ export function ModelDetail({
           <div className="mb-2 flex flex-wrap items-center gap-2">
             {item.engine ? <VerdictTag verdict={fit.verdict} /> : <span className="text-[12px] text-fg-2">Runner unavailable</span>}
             {item.experimental && <span className="rounded-[5px] bg-tight-soft px-1.5 py-px text-[11px] font-medium text-tight">Experimental</span>}
+            {item.finetune && (
+              <span className="rounded-[5px] bg-bg-2 px-1.5 py-px text-[11px] font-medium text-fg-2" title="Model Studio can fine-tune or abliterate this base repo.">
+                Fine-tunable
+              </span>
+            )}
             {detail.isFetching && <Loader className="size-3.5 animate-spin text-fg-3" />}
           </div>
           <div className="flex items-start gap-4"><ModelLogo id={item.id} name={item.name} source={item.source} className="size-12" /><h2 className="display min-w-0 break-words text-[32px] leading-tight">{item.name}</h2></div>
@@ -366,6 +389,38 @@ export function ModelDetail({
           )}
         </div>}
 
+        {!!item.presets?.length && (
+          <div>
+            <div className="readout mb-2">Presets</div>
+            <div className="space-y-1.5">
+              {item.presets.map((preset) => (
+                <button
+                  key={preset.name}
+                  type="button"
+                  onClick={() => {
+                    if (preset.engine) setEngine(preset.engine);
+                    if (preset.lifecycle) setSwap(preset.lifecycle === "llama_swap");
+                    if (preset.quant) {
+                      const match = item.variants.find((v) => `${v.id} ${v.label}`.toLowerCase().includes(preset.quant!.toLowerCase()));
+                      if (match) setVariant(match.id);
+                      else setOption("quantize", preset.quant);
+                    }
+                    if (preset.ctx) setOption("ctx", preset.ctx);
+                    for (const [key, value] of Object.entries(preset.options ?? {})) setOption(key, value);
+                  }}
+                  className="w-full rounded-lg border border-line px-3 py-2 text-left text-[13px] hover:border-fg-3"
+                >
+                  <span className="font-medium">{preset.name}</span>
+                  <span className="ml-2 font-mono text-[11.5px] text-fg-3">
+                    {[preset.engine, preset.quant, preset.ctx && `${preset.ctx} ctx`, preset.lifecycle].filter(Boolean).join(" · ")}
+                  </span>
+                  {preset.note && <span className="mt-0.5 block text-[11.5px] text-fg-3">{preset.note}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {item.variants.length > 1 && (
           <div>
             <div className="readout mb-2">{item.source === "ollama" ? "Size / tag" : "Quantization"}</div>
@@ -392,6 +447,15 @@ export function ModelDetail({
           </Field>
         )}
 
+        {(engine ?? item.engine) === "llamacpp" && (
+          <Toggle
+            checked={swap}
+            onChange={setSwap}
+            label="Run under llama-swap"
+            hint="One shared process loads GGUF models on demand, so several models can share VRAM and the API can switch between them without a deployment each. Models that are available but idle unload after 5 minutes."
+          />
+        )}
+
         {item.engine && (
           <div>
             <div className="readout mb-2">Settings</div>
@@ -401,6 +465,60 @@ export function ModelDetail({
               onChange={setOptions}
             />
           </div>
+        )}
+
+        {item.modality === "text" && (
+          <details className="rounded-xl border border-line bg-bg-2/40 px-4 py-3">
+            <summary className="cursor-pointer text-[13px] font-medium text-fg-2">Model options</summary>
+            <div className="mt-3 space-y-3" onClick={(e) => e.stopPropagation()}>
+              <Field label="System prompt" hint="Sent ahead of every request to this model. Empty falls back to the global default.">
+                <Textarea
+                  rows={3}
+                  value={options.system_prompt ?? ""}
+                  placeholder="Leave empty to use the global default"
+                  onChange={(e) => setOption("system_prompt", e.target.value)}
+                />
+              </Field>
+              <Field label="System prompt mode">
+                <Select
+                  value={options.system_prompt_mode === "replace" ? "replace" : "prepend"}
+                  onChange={(e) => setOption("system_prompt_mode", e.target.value === "replace" ? "replace" : undefined)}
+                >
+                  <option value="prepend">Prepend to the app's prompt</option>
+                  <option value="replace">Replace the app's prompt</option>
+                </Select>
+              </Field>
+              <Toggle
+                checked={Boolean(options.slim_harness)}
+                onChange={(v) => setOption("slim_harness", v ? true : undefined)}
+                label="Slim harness"
+                hint="Drop the static instruction sections of recognised coding harnesses from system messages."
+              />
+              <Toggle
+                checked={compress.includes("tools")}
+                onChange={() => toggleCompress("tools")}
+                label="Compress tool output"
+                hint="Strip ANSI, collapse repeated lines, drop install progress and truncate long results at 200 lines."
+              />
+              <Toggle
+                checked={compress.includes("prose")}
+                onChange={() => toggleCompress("prose")}
+                label="Compress prose"
+                hint="Remove stock acknowledgements and closing offers from earlier assistant turns."
+              />
+              <Field label="Response cache">
+                <Select
+                  value={typeof options.cache === "string" ? options.cache : "inherit"}
+                  onChange={(e) => setOption("cache", e.target.value)}
+                >
+                  <option value="inherit">Follow global settings</option>
+                  <option value="off">Off for this model</option>
+                  <option value="exact">Exact match</option>
+                  <option value="semantic">Semantic match</option>
+                </Select>
+              </Field>
+            </div>
+          </details>
         )}
 
         {item.engine && (
@@ -427,7 +545,7 @@ export function ModelDetail({
                     repo = (await api.original(item.id, variant ?? item.variant ?? "").catch(() => ({ repo: null }))).repo ?? "";
                     guessed = true;
                   }
-                  nav("/imports", { state: { abliterate: repo, abliterateFrom: guessed || repo !== item.id ? item.name : undefined } });
+                  nav("/create?tab=edit", { state: { abliterate: repo, abliterateFrom: guessed || repo !== item.id ? item.name : undefined } });
                 }}
               >
                 Abliterate…

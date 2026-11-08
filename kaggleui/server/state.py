@@ -16,6 +16,7 @@ from ..optimize import Optimizer
 from ..schemas import Preset, Settings
 from ..storage import StorageManager
 from ..system.probe import Probe
+from ..system.quota import QuotaLedger
 from ..tunnels.manager import TunnelManager
 from ..workbench.jobs import JobStore
 from ..workbench.registry import ArtifactRegistry
@@ -57,6 +58,7 @@ class AppState:
     storage: StorageManager = field(init=False)
     optimize: Optimizer = field(init=False)
     host: HostAdapter = field(init=False)
+    quota: QuotaLedger = field(init=False)
     management: ManagementTokens = field(init=False)
     auto_backup_task: Any = field(default=None, init=False, repr=False)
 
@@ -81,6 +83,8 @@ class AppState:
         self.updates = Updates(self)
         self.host = detect()
         self.management = ManagementTokens(self.paths.home / "management.json")
+        self.quota = QuotaLedger(self.paths.home / "quota.json")
+        self.quota.begin(self.probe.snapshot().accelerator)
 
     def main_url(self) -> str:
         t = self.tunnels.get("main")

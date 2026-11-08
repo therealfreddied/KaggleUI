@@ -278,3 +278,23 @@ def test_status_after_a_settings_change_reports_the_new_location(state, connect,
     assert out["remote_available"] is True
     assert out["remote_sha"] == "sha-new"
     assert out["remote_changed"] is False
+
+def test_launch_seeds_workspace_sync_from_environment(paths, monkeypatch):
+    """The notebook configures sync before the server boots, so restore sees it on first start."""
+    from kaggleui import launcher
+
+    monkeypatch.setenv("KAGGLEUI_WORKSPACE_REPO", "therealfreddied/kui-workspace")
+    monkeypatch.setenv("KAGGLEUI_WORKSPACE_PATH", "workspaces/notebook")
+    launcher._seed_workspace(paths, {"enabled": True, "restore_on_launch": True, "auto_backup": True})
+    settings = Settings.model_validate(json.loads((paths.home / "workbench" / "settings.json").read_text())["settings"])
+    assert settings.workspace.repo == "therealfreddied/kui-workspace"
+    assert settings.workspace.path == "workspaces/notebook"
+    assert settings.workspace.token_secret == "GITHUB_TOKEN"
+    assert settings.workspace.restore_on_launch and settings.workspace.auto_backup
+
+    # A second launch keeps the repository but saves nothing when no repository is configured.
+    monkeypatch.setenv("KAGGLEUI_WORKSPACE_REPO", "")
+    before = settings.workspace.model_dump()
+    launcher._seed_workspace(paths, {"enabled": True, "restore_on_launch": True, "auto_backup": True})
+    saved = Settings.model_validate(json.loads((paths.home / "workbench" / "settings.json").read_text())["settings"])
+    assert saved.workspace.model_dump() == before

@@ -40,6 +40,14 @@ def _read_state(paths: Paths) -> dict | None:
         return None
 
 
+def _identity(proc: psutil.Process) -> tuple[int, float]:
+    """Start time with the PID. Sandboxes that hide /proc/stat fall back to the PID alone."""
+    try:
+        return (proc.pid, proc.create_time())
+    except psutil.Error:
+        return (proc.pid, -1.0)
+
+
 def _alive(pid: int | None) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
@@ -98,7 +106,13 @@ def stop(home: str | None = None, *, _preserve_pid: int | None = None, _keep_tun
         server = psutil.Process(st["pid"])
         started = st.get("process_started_at")
         if started is not None:
-            matches = abs(server.create_time() - started) < 0.01
+            try:
+                matches = abs(server.create_time() - started) < 0.01
+            except psutil.AccessDenied:
+                matches = False
+            if not matches:
+                cmd = server.cmdline()
+                matches = "kaggleui" in cmd and "serve" in cmd
         else:
             cmd = server.cmdline()
             matches = "kaggleui" in cmd and "serve" in cmd
@@ -111,22 +125,26 @@ def stop(home: str | None = None, *, _preserve_pid: int | None = None, _keep_tun
     if _keep_tunnel:
         request_handoff(paths, server)
     children: dict[tuple[int, float], psutil.Process] = {}
-    preserved = {(proc.pid, proc.create_time()) for proc in saved_processes(paths)} if _keep_tunnel else set()
+    preserved = {_identity(proc) for proc in saved_processes(paths)} if _keep_tunnel else set()
     if _preserve_pid is not None:
         try:
             updater = psutil.Process(_preserve_pid)
-            preserved.update((proc.pid, proc.create_time()) for proc in [updater, *updater.children(recursive=True)])
+            preserved.update(_identity(proc) for proc in [updater, *updater.children(recursive=True)])
         except psutil.NoSuchProcess:
             pass
+        except psutil.AccessDenied:  # the sandbox hides the updater's children; stop it by PID anyway
+            preserved.add(_identity(updater))
 
     def remember_children() -> None:
         try:
             for child in server.children(recursive=True):
-                identity = (child.pid, child.create_time())
+                identity = _identity(child)
                 if identity in preserved:
                     continue
                 children[identity] = child
         except psutil.NoSuchProcess:
+            pass
+        except psutil.AccessDenied:  # children are visible but their /proc/stat entries are not
             pass
 
     remember_children()
@@ -197,8 +215,43 @@ def restart_tunnel(home: str | None = None) -> dict:
     raise RuntimeError(f"The public tunnel didn't connect. Check {paths.logs / 'tunnel-main.log'}.")
 
 
+def _seed_workspace(paths: Paths, options: dict | None) -> None:
+    """Write workspace-sync settings before the server starts so it can restore from GitHub.
+
+    The repository, folder and secret name come from the notebook environment when the options do
+    not name them, which is how ``KAGGLEUI_WORKSPACE_REPO`` plus a ``GITHUB_TOKEN`` secret works
+    without a settings pass through the panel first. No repository means no seeding at all.
+    """
+    if not options:
+        return
+    merged = {"repo": options.get("repo") or os.environ.get("KAGGLEUI_WORKSPACE_REPO", "").strip(),
+              "path": options.get("path") or os.environ.get("KAGGLEUI_WORKSPACE_PATH", "").strip() or None,
+              "branch": options.get("branch") or os.environ.get("KAGGLEUI_WORKSPACE_BRANCH", "").strip() or None,
+              "token_secret": options.get("token_secret")
+              or os.environ.get("KAGGLEUI_WORKSPACE_TOKEN_SECRET", "").strip() or None}
+    merged = {key: value for key, value in merged.items() if value is not None}
+    if not merged.get("repo"):
+        print("GitHub sync is off: set the KAGGLEUI_WORKSPACE_REPO secret (owner/repo) and relaunch.",
+              flush=True)
+        return
+    from .schemas import Settings, WorkspaceSettings
+    from .workbench.store import WorkbenchStore
+
+    store = WorkbenchStore(paths.home / "workbench")
+    try:
+        settings = Settings.model_validate(store.load_settings() or {})
+    except ValueError:
+        settings = Settings()
+    current = settings.workspace.model_dump() | merged | dict(options)
+    settings.workspace = WorkspaceSettings.model_validate(current)
+    store.save_settings(settings.model_dump())
+    print(f"Workspace sync: {settings.workspace.repo} ({settings.workspace.path} on "
+          f"{settings.workspace.branch}); restoring at launch and backing up after changes.", flush=True)
+
+
 def launch(preset=None, *, block: bool = True, tunnel: str | None = None, port: int | None = None,
-           mock: bool = False, fake_hw: str | None = None, home: str | None = None):
+           mock: bool = False, fake_hw: str | None = None, home: str | None = None,
+           workspace: dict | None = None):
     load_attached_secrets()  # Host secrets are readable from the kernel process; pass them down via env.
     paths = Paths(home).ensure()
     existing = _read_state(paths)
@@ -226,6 +279,7 @@ def launch(preset=None, *, block: bool = True, tunnel: str | None = None, port: 
         raise RuntimeError("KaggleUI is running but its tunnel isn't ready. Run kaggleui.restart_tunnel() "
                            "to reconnect, or kaggleui.stop() before launching again.")
 
+    _seed_workspace(paths, workspace)
     p = load_preset(preset)
     cmd = [sys.executable, "-m", "kaggleui", "serve", "--port", str(port or retained.get("port") or DEFAULT_PORT),
            "--tunnel", tunnel or (p.settings.exposure.provider if p else
@@ -308,6 +362,9 @@ def _block(paths: Paths, state: dict) -> None:
             time.sleep(5)
             st = _read_state(paths)
             if not _running(st):
+                if (paths.home / "restart.json").exists():
+                    # The panel restarted itself; the helper is spawning a replacement server.
+                    continue
                 print("KaggleUI stopped.")
                 print(_tail(paths.logs / "server.log"))
                 return

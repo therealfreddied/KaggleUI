@@ -1,9 +1,11 @@
-import { AlertTriangle, Check, Cpu, HardDrive, KeyRound, Wifi, WifiOff, X } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Check, Cpu, HardDrive, KeyRound, Power, RotateCw, Wifi, WifiOff, X } from "lucide-react";
 
 import { GpuMeter, LedMeter } from "../components/meters";
-import { SectionTitle } from "../components/ui";
+import { Button, SectionTitle, useToast } from "../components/ui";
 import { UpdateNotice } from "../components/Updates";
 import { bytes, cx, duration } from "../lib/format";
+import { api } from "../lib/api";
 import { useLive } from "../lib/live";
 
 const SECRET_HELP: Record<string, string> = {
@@ -17,6 +19,52 @@ const SECRET_HELP: Record<string, string> = {
   KAGGLEUI_API_KEY: "Fixed API key",
   KAGGLEUI_NOTIFY_URL: "Push the URL to ntfy.sh or a Discord webhook",
 };
+
+function ServerActions() {
+  const toast = useToast();
+  const [busy, setBusy] = useState<"stop" | "restart" | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function run(kind: "stop" | "restart") {
+    const message = kind === "stop"
+      ? "Stop the KaggleUI server? Running models stop and this page disconnects. The Kaggle notebook session keeps running."
+      : "Restart the KaggleUI server? Running models are redeployed and the public URL stays the same.";
+    if (!window.confirm(message)) return;
+    setBusy(kind);
+    try {
+      const result = kind === "stop" ? await api.shutdown() : await api.restart();
+      setNote(result.note);
+      toast(kind === "stop" ? "Server is stopping." : "Server is restarting.");
+    } catch (exc) {
+      const text = exc instanceof Error ? exc.message : "The request failed.";
+      setNote(text);
+      toast(text, "error");
+      setBusy(null);
+    }
+  }
+
+  return (
+    <section className="panel min-w-0 p-5 lg:col-span-3">
+      <div className="mb-1 flex items-center gap-2">
+        <Power className="size-4 text-fg-2" />
+        <span className="readout">Server</span>
+      </div>
+      <p className="mb-4 text-[13px] text-fg-3">
+        Restart keeps the port and public URL and brings back the models running now. Shut down ends this server
+        process only — the Kaggle notebook keeps running.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button busy={busy === "restart"} disabled={busy !== null} onClick={() => run("restart")}>
+          <RotateCw className="size-4" /> Restart
+        </Button>
+        <Button variant="danger" busy={busy === "stop"} disabled={busy !== null} onClick={() => run("stop")}>
+          <Power className="size-4" /> Shut down
+        </Button>
+      </div>
+      {note && <p className="mt-3 text-[13px] text-fg-2">{note}</p>}
+    </section>
+  );
+}
 
 export default function System() {
   const { overview } = useLive();
@@ -104,6 +152,8 @@ export default function System() {
             ))}
           </div>
         </section>
+
+        <ServerActions />
 
         <section className="panel min-w-0 p-5 lg:col-span-3">
           <div className="mb-1 flex items-center gap-2">

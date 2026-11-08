@@ -333,11 +333,23 @@ def _config_key(state: AppState) -> str:
     cfg = state.settings.workspace
     return f"{cfg.repo}|{cfg.branch}|{cfg.path}"
 
+def _baseline(state: AppState, info: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """Stored shas only describe the location they were recorded for.
+
+    Re-pointing the workspace at another repository, branch or path is an explicit act, so the
+    old baseline must not turn the next backup into a phantom conflict. The caller still asks
+    for confirmation before overwriting content that already exists at the new location.
+    """
+    key = info.get("config_key")
+    if key and key != _config_key(state):
+        return {**info, "remote_sha": None, "last_backup_hash": None}, True
+    return info, False
+
 async def status(state: AppState) -> dict[str, Any]:
     cfg = state.settings.workspace
     local = export_document(state)
     local_hash = document_hash(local)
-    info = _state(state)
+    info, _ = _baseline(state, _state(state))
     out: dict[str, Any] = {
         "configured": bool(cfg.enabled and cfg.repo.strip()),
         "repo": cfg.repo, "branch": cfg.branch, "path": cfg.path,
@@ -356,9 +368,6 @@ async def status(state: AppState) -> dict[str, Any]:
         out["error"] = str(exc)
         return out
     if not out["configured"] or not out["token_set"]:
-        return out
-    if info.get("config_key") and info.get("config_key") != _config_key(state):
-        out["error"] = "Workspace repository settings changed; fetch a preview before overwriting templates"
         return out
     try:
         remote = await _client(state).get_file()
@@ -401,7 +410,7 @@ async def backup(state: AppState, *, force: bool = False, message: str | None = 
     client = _client(state)
     current = export_document(state)
     current_hash = document_hash(current)
-    info = _state(state)
+    info, repointed = _baseline(state, _state(state))
     remote = await client.get_file()
     remote_sha = remote[1] if remote else None
     remote_hash = document_hash(remote[0]) if remote else None
@@ -416,7 +425,7 @@ async def backup(state: AppState, *, force: bool = False, message: str | None = 
         _save(state, remote_sha=remote_sha, last_backup_hash=current_hash, last_backup_at=time.time(),
               config_key=_config_key(state))
         return {"status": "unchanged", "sha": remote_sha, "document_hash": current_hash}
-    if local_changed and not confirm and not force:
+    if (local_changed or (repointed and remote is not None)) and not confirm and not force:
         raise SyncConflict("This install has unsaved workspace changes; confirm to publish them",
                            local_sha=info.get("remote_sha"), remote_sha=remote_sha,
                            local_changed=True, remote_changed=remote_changed)
@@ -450,11 +459,11 @@ async def restore(state: AppState, *, confirm: bool = False, resolution: str = "
     incoming = validate_document(remote_doc)
     current = export_document(state)
     diff = diff_documents(current, incoming)
-    info = _state(state)
+    info, repointed = _baseline(state, _state(state))
     local_hash = document_hash(current)
     local_changed = bool(info.get("last_backup_hash")) and local_hash != info.get("last_backup_hash")
     remote_changed = bool(info.get("remote_sha")) and remote_sha != info.get("remote_sha")
-    if (local_changed or remote_changed) and not confirm:
+    if (local_changed or remote_changed or repointed) and not confirm:
         raise SyncConflict("Local and remote workspaces differ; preview first and pass confirm=true",
                            local_sha=info.get("remote_sha"), remote_sha=remote_sha,
                            local_changed=local_changed, remote_changed=remote_changed)

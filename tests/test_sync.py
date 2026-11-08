@@ -14,6 +14,7 @@ from kaggleui.workbench import sync, workspace
 class FakeGitHub:
     def __init__(self, document, sha="sha1"):
         self.remote = (document, sha)
+        self.path = "workspaces/default/workspace.json"
         self.puts = []
 
     async def get_file(self, path=None, ref=None):
@@ -240,3 +241,40 @@ def test_put_file_bootstraps_an_empty_repository(monkeypatch):
     assert sha == "first"
     assert "branch" not in calls[-1][2]
     assert "sha" not in calls[-1][2]
+
+
+def test_repointed_workspace_ignores_the_old_location_baseline(state, connect):
+    """Changing repo/path must not read the previous location's sha as a remote edit."""
+    current = workspace.export_document(state)
+    other = current.model_dump()
+    other["meta"]["name"] = "Elsewhere"
+    fake = connect(state, FakeGitHub(other, "other-sha"))
+    state.workbench.save_workspace_state({"remote_sha": "stale-sha", "last_backup_hash": "stale-hash",
+                                          "config_key": "someone/else|main|workspaces/other"})
+    state.settings.workspace.path = "workspaces/default"
+    result = asyncio.run(sync.backup(state, confirm=True))
+    assert result["status"] == "backed_up"
+    assert fake.puts and fake.puts[0]["sha"] == "other-sha"
+
+
+def test_repointed_workspace_still_confirms_before_overwriting(state, connect):
+    current = workspace.export_document(state)
+    connect(state, FakeGitHub(current.model_dump(), "other-sha"))
+    state.workbench.save_workspace_state({"remote_sha": "stale-sha",
+                                          "config_key": "someone/else|main|workspaces/other"})
+    with pytest.raises(sync.SyncConflict):
+        asyncio.run(sync.backup(state))
+
+
+def test_status_after_a_settings_change_reports_the_new_location(state, connect, monkeypatch):
+    current = workspace.export_document(state)
+    monkeypatch.setenv("GITHUB_TOKEN", "token")
+    connect(state, FakeGitHub(current.model_dump(), "sha-new"))
+    state.workbench.save_workspace_state({"remote_sha": "stale-sha",
+                                          "config_key": "someone/else|main|workspaces/other"})
+    state.settings.workspace.path = "workspaces/default"
+    out = asyncio.run(sync.status(state))
+    assert out["error"] is None
+    assert out["remote_available"] is True
+    assert out["remote_sha"] == "sha-new"
+    assert out["remote_changed"] is False

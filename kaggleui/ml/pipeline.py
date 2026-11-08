@@ -173,8 +173,6 @@ def _engine_name(plan: ForgePlan, stage: StageKind) -> str:
     if stage == "edit":
         return "heretic" if plan.edit_method == "heretic" else "mergekit"
     if stage == "export":
-        from ..engines.llamacpp_release import LLAMACPP_RELEASE
-
         return "llama.cpp"
     return _STAGE_ENGINE[stage]
 

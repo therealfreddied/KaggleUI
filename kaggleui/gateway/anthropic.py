@@ -8,7 +8,16 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from .common import SSE_HEADERS, GatewayError, anthropic_error, check_access, find, state_of, wrap
+from .common import (
+    SSE_HEADERS,
+    GatewayError,
+    anthropic_error,
+    check_access,
+    find,
+    require_messages,
+    state_of,
+    wrap,
+)
 from .reasoning import normalize_response, normalize_stream
 from .translate import anthropic_to_openai, openai_stream_to_anthropic, openai_to_anthropic
 
@@ -23,6 +32,7 @@ async def _body(request: Request) -> dict:
         raise GatewayError(400, "Request body must be JSON") from e
     if not isinstance(body, dict) or not body.get("messages"):
         raise GatewayError(400, "'messages' is required")
+    require_messages(body, anthropic=True)
     return body
 
 

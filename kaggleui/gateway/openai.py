@@ -11,7 +11,17 @@ from urllib.parse import quote
 from fastapi import APIRouter, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, Response, StreamingResponse
 
-from .common import SSE_HEADERS, GatewayError, check_access, find, openai_error, sse_openai, state_of, wrap
+from .common import (
+    SSE_HEADERS,
+    GatewayError,
+    check_access,
+    find,
+    openai_error,
+    require_messages,
+    sse_openai,
+    state_of,
+    wrap,
+)
 from .reasoning import normalize_response, normalize_stream
 
 router = APIRouter()
@@ -203,6 +213,7 @@ async def chat_completions(request: Request):
     try:
         check_access(request, "openai")
         body = await _json(request)
+        require_messages(body)
         dep = await find(request, body.get("model"), "text")
         assert dep.backend
         optimize = state_of(request).optimize

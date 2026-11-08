@@ -156,8 +156,14 @@ async def start_local(store: JobStore, job: JobRecord, work) -> asyncio.Task:
             store.update(job.id, state="succeeded", ended_at=time.time(), progress=1.0)
 
     task = asyncio.create_task(_run())
+    store.attach_local(job.id, task)
     _background.add(task)
-    task.add_done_callback(_background.discard)
+
+    def _done(t: asyncio.Task) -> None:
+        _background.discard(t)
+        store.detach_local(job.id)
+
+    task.add_done_callback(_done)
     return task
 
 _background: set[asyncio.Task] = set()

@@ -72,6 +72,21 @@ async def find(request: Request, model: str | None, modality: str) -> Deployment
     return dep
 
 
+def require_messages(body: dict, *, anthropic: bool = False) -> None:
+    """Reject malformed message lists here, so translation never sees a shape it cannot handle."""
+    messages = body.get("messages")
+    if not isinstance(messages, list) or not messages:
+        raise GatewayError(400, "'messages' must be a non-empty array")
+    roles = {"user", "assistant"} if anthropic else {"user", "assistant", "system", "tool", "developer"}
+    for message in messages:
+        if not isinstance(message, dict):
+            raise GatewayError(400, "each entry of 'messages' must be an object")
+        role = message.get("role")
+        if role not in roles:
+            raise GatewayError(400, f"unsupported message role: {role!r}")
+        if anthropic and "content" not in message:
+            raise GatewayError(400, "each message needs 'content'")
+
 def openai_error(e: GatewayError) -> JSONResponse:
     return JSONResponse({"error": {"message": e.message, "type": e.kind, "code": e.code}}, status_code=e.status)
 

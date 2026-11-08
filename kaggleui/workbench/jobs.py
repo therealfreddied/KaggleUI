@@ -6,6 +6,7 @@ A job is the only state shared with its child process. Children report progress 
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 import threading
@@ -100,6 +101,8 @@ class JobStore:
             self._conn.execute(SCHEMA)
             self._conn.commit()
         self._runners: dict[str, JobRunner] = {}
+        # In-process jobs (start_local) have no child to stop; their task is what cancel interrupts.
+        self._locals: dict[str, asyncio.Task] = {}
 
     # -- records -------------------------------------------------------------------------------
     def create(self, kind: str, spec: dict, *, resume_supported: bool = False, logs_path: str | None = None,
@@ -122,13 +125,15 @@ class JobStore:
             self._conn.commit()
 
     def update(self, job_id: str, **fields: Any) -> JobRecord:
-        record = self.get(job_id)
-        if record is None:
-            raise KeyError(job_id)
-        data = record.model_dump()
-        data.update(fields)
-        rec = JobRecord.model_validate(data)
+        # Read and write under one lock: update() is read-modify-write over the whole row, so a
+        # concurrent update (progress vs cancel) would otherwise restore the fields it read stale.
         with self._lock:
+            row = self._conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
+            if row is None:
+                raise KeyError(job_id)
+            data = _row_to_record(row).model_dump()
+            data.update(fields)
+            rec = JobRecord.model_validate(data)
             self._conn.execute(
                 "UPDATE jobs SET state=?, progress=?, message=?, error=?, started_at=?, ended_at=?, pid=?, worker=?,"
                 " artifacts_json=?, checkpoint=?, cancel_requested=?, logs_path=?, spec_json=? WHERE id=?",
@@ -166,6 +171,10 @@ class JobStore:
         runner = self._runners.get(job_id)
         if runner is not None:
             await runner.stop()
+        task = self._locals.get(job_id)
+        if task is not None and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
         return self.get(job_id) or rec
 
     def attach(self, runner: JobRunner) -> None:
@@ -173,6 +182,12 @@ class JobStore:
 
     def detach(self, job_id: str) -> None:
         self._runners.pop(job_id, None)
+
+    def attach_local(self, job_id: str, task: asyncio.Task) -> None:
+        self._locals[job_id] = task
+
+    def detach_local(self, job_id: str) -> None:
+        self._locals.pop(job_id, None)
 
     def runner(self, job_id: str) -> JobRunner | None:
         return self._runners.get(job_id)

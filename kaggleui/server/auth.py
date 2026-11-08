@@ -126,10 +126,10 @@ class Auth:
     # -- rate limiting ------------------------------------------------------------------------
     @staticmethod
     def client_ip(request: Request) -> str:
-        for header in ("cf-connecting-ip", "x-forwarded-for", "x-real-ip"):
-            v = request.headers.get(header)
-            if v:
-                return v.split(",")[0].strip()
+        # Never read X-Forwarded-For here: any caller could rotate it and pick a fresh rate-limit
+        # bucket. uvicorn (run.py: proxy_headers=True, forwarded_allow_ips="127.0.0.1") already
+        # rewrites request.client.host from that header when — and only when — the peer is the
+        # local proxy.
         return request.client.host if request.client else "unknown"
 
     def is_rate_limited(self, ip: str) -> bool:

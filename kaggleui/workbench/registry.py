@@ -16,6 +16,7 @@ import json
 import os
 import shutil
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -52,6 +53,8 @@ class ArtifactRegistry:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.index = self.root / "index.json"
+        # index.json is read-modify-written by every add/remove; the lock covers the whole cycle.
+        self._lock = threading.Lock()
 
     # -- reading ---------------------------------------------------------------------------------
     def _entries(self) -> list[dict]:
@@ -63,10 +66,16 @@ class ArtifactRegistry:
 
     def _write_index(self, entries: list[dict]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        tmp = self.index.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"schema_version": 1, "artifacts": entries}, indent=1))
-        os.chmod(tmp, 0o600)
-        tmp.replace(self.index)
+        fd, name = tempfile.mkstemp(dir=str(self.root), prefix=f"{self.index.name}.", suffix=".tmp")
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w") as handle:
+                json.dump({"schema_version": 1, "artifacts": entries}, handle, indent=1)
+            os.chmod(tmp, 0o600)
+            tmp.replace(self.index)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
 
     def dir_for(self, artifact_id: str, version: str) -> Path:
         return self.root / _safe_id(artifact_id) / _safe_id(version)
@@ -132,12 +141,17 @@ class ArtifactRegistry:
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
 
-        entries = [e for e in self._entries() if not (e.get("artifact_id") == artifact_id
-                                                       and e.get("version") == version)]
-        entries.append({"artifact_id": artifact_id, "version": version, "kind": final.kind,
-                        "created_at": final.created_at, "dir": str(target)})
-        self._write_index(entries)
+        self._lock_entries_write(artifact_id, version, {
+            "artifact_id": artifact_id, "version": version, "kind": final.kind,
+            "created_at": final.created_at, "dir": str(target)})
         return final
+
+    def _lock_entries_write(self, artifact_id: str, version: str, entry: dict) -> None:
+        with self._lock:
+            entries = [e for e in self._entries() if not (e.get("artifact_id") == artifact_id
+                                                           and e.get("version") == version)]
+            entries.append(entry)
+            self._write_index(entries)
 
     # -- maintenance -----------------------------------------------------------------------------
     def verify(self, artifact_id: str, version: str | None = None) -> dict:
@@ -163,8 +177,9 @@ class ArtifactRegistry:
         if not target.exists():
             raise RegistryError(f"{artifact_id} {version} does not exist")
         shutil.rmtree(target)
-        self._write_index([e for e in self._entries()
-                           if not (e.get("artifact_id") == artifact_id and e.get("version") == version)])
+        with self._lock:
+            self._write_index([e for e in self._entries()
+                               if not (e.get("artifact_id") == artifact_id and e.get("version") == version)])
 
     def public(self) -> list[dict]:
         return [m.model_dump() for m in self.list()]

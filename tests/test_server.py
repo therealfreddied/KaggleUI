@@ -161,3 +161,20 @@ def test_diffusers_world_prompt_goes_directly_to_world_runtime(client, state):
                     headers=key)
     assert r.status_code == 200
     assert "start_frame_model" not in r.json()
+
+def test_malformed_gateway_bodies_are_client_errors(client, state):
+    deploy(client, state)
+    key = {"x-api-key": state.auth.api_key}
+    bad_openai = client.post("/v1/chat/completions", json={"model": "qwen3", "messages": "hi"}, headers=key)
+    assert bad_openai.status_code == 400, bad_openai.text
+    bad_anthropic = client.post("/v1/messages", json={"model": "qwen3", "messages": [{"role": "assistant"}],
+                                                     "max_tokens": 8}, headers=key)
+    assert bad_anthropic.status_code == 400, bad_anthropic.text
+
+def test_access_lockout_cannot_be_evaded_by_rotating_forwarded_for(client):
+    codes = []
+    for i in range(20):
+        r = client.post("/_kui/api/access-login", json={"password": "wrong"},
+                        headers={"x-forwarded-for": f"10.9.{i // 250}.{i % 250}"})
+        codes.append(r.status_code)
+    assert 429 in codes, codes

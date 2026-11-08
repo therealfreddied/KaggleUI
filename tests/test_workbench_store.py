@@ -49,3 +49,46 @@ def test_active_set_cleared_when_deleted(paths, tmp_path):
     store.mark_active(saved.id)
     store.delete_deployment_set(saved.id)
     assert store.active_set is None
+def test_concurrent_job_updates_keep_each_others_fields(tmp_path):
+    """Two fields written concurrently must both survive; update() is read-modify-write."""
+    import threading
+    import time
+
+    from kaggleui.workbench.jobs import JobStore
+
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    job = store.create("forge.train", {})
+    store.update(job.id, state="running")          # request_cancel must not take its queued shortcut
+    real_get = store.get
+
+    def slow_get(job_id):
+        record = real_get(job_id)
+        time.sleep(0.1)  # widen the window an unlocked update() would leave open
+        return record
+
+    store.get = slow_get
+    errors: list[BaseException] = []
+
+    def progress():
+        try:
+            store.update(job.id, progress=0.25)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    def cancel():
+        try:
+            store.request_cancel(job.id)
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=progress, name="progress"), threading.Thread(target=cancel, name="cancel")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    store.get = real_get
+    assert not errors
+    record = store.get(job.id)
+    assert record.progress == 0.25
+    assert record.cancel_requested is True
+    store.close()

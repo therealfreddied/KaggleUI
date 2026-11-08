@@ -98,3 +98,38 @@ def test_corrupt_index_is_treated_as_empty(tmp_path):
     reg.root.mkdir(parents=True)
     reg.index.write_text("{not json")
     assert reg.list() == [] and reg.get("demo") is None
+
+def test_concurrent_adds_keep_every_index_entry(tmp_path):
+    """Several jobs saving artifacts at the same time must all stay listable."""
+    import threading
+    import time
+
+    src = tmp_path / "src"
+    src.mkdir()
+    one, _ = _files(src)
+    reg = ArtifactRegistry(tmp_path / "artifacts")
+    real_entries = reg._entries
+
+    def slow_entries():
+        entries = real_entries()
+        time.sleep(0.1)                      # widen the window an unlocked index cycle would leave open
+        return entries
+
+    reg._entries = slow_entries
+
+    errors: list[BaseException] = []
+
+    def add(artifact_id):
+        try:
+            reg.add(_manifest(artifact_id=artifact_id), [one])
+        except BaseException as exc:  # noqa: BLE001 - surfaced below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=add, args=(f"art-{i}",), name=f"add-{i}") for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    reg._entries = real_entries
+    assert not errors
+    assert {m.artifact_id for m in reg.list()} == {f"art-{i}" for i in range(4)}

@@ -1,9 +1,10 @@
 """Durable jobs: crash recovery, cancel-before-start and log paging."""
 
+import asyncio
 import sys
 
 from kaggleui.workbench.jobs import JobStore, read_log
-from kaggleui.workbench.runner import JobRunner
+from kaggleui.workbench.runner import JobRunner, start_local
 
 
 def test_interrupted_jobs_are_recoverable_after_restart(tmp_path):
@@ -58,3 +59,22 @@ def test_read_log_pages_by_line(tmp_path):
     log.write_text("\n".join(f"line {i}" for i in range(10)) + "\n")
     assert read_log(log, 2, 3) == ["line 2", "line 3", "line 4"]
     assert read_log(None) == []
+
+async def test_cancel_stops_in_process_jobs(tmp_path):
+    """Cancelling a job must stop its work, whichever way it runs."""
+    store = JobStore(tmp_path / "jobs.sqlite3")
+    job = store.create("artifact.export", {})
+    started = asyncio.Event()
+
+    async def work(ctx):
+        started.set()
+        await asyncio.sleep(0.1)
+        ctx.log("work ran to completion despite the cancel")
+
+    task = await start_local(store, job, work)
+    await started.wait()
+    cancelled = await store.cancel(job.id)
+    assert cancelled.state == "cancelled"
+    await asyncio.gather(task, return_exceptions=True)
+    assert store.get(job.id).state == "cancelled"
+    store.close()

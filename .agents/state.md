@@ -4,37 +4,35 @@ Updated: 2026-11-08
 
 ## Goal
 
-Fix the five concurrency / input-validation bugs (F1–F5) documented by the staged strict-`xfail`
-tests. Complete: all five fixed, markers removed, suite green except the three environmental
-`test_shutdown.py` failures.
+No active feature request. `0.4.2` released from `main`: the five concurrency / input-validation
+fixes (F1–F5) plus the version bump and rebuilt wheel.
 
 ## Progress
 
-- F1 in-process job cancel: `JobStore._locals` + `attach_local`/`detach_local`; `cancel()` cancels and
-  awaits the task. `runner.start_local` registers it.
-- F2 `JobStore.update`: read + write under one lock (SELECT inside `self._lock`).
-- F3 gateway bodies: `gateway/common.require_messages` → 400 from `/v1/chat/completions` and
-  `/v1/messages` before translation.
-- F4 lockout evasion: `Auth.client_ip` returns `request.client.host`; forwarded headers are only
-  honoured through uvicorn's trusted-proxy handling.
-- F5 registry index: `ArtifactRegistry._lock` around the index cycle; unique `mkstemp` temp file
-  (also applied to `remove`).
-- Removed a dead `LLAMACPP_RELEASE` import in `ml/pipeline._engine_name` (was failing `ruff check`).
-- Tests: F2/F5 harnesses rewritten (sleep in the read path instead of a barrier that would deadlock a
-  correct lock); F1/F3/F4 kept as written, `xfail` markers dropped.
+- `10af3f4` — fixes: in-process job cancel (`JobStore._locals` + `attach_local`/`detach_local`),
+  `JobStore.update` reads and writes under one lock, `gateway/common.require_messages` → 400 for
+  malformed bodies on `/v1/chat/completions` and `/v1/messages`, `Auth.client_ip` returns
+  `request.client.host` (forwarded headers trusted only through uvicorn's local proxy), artifact
+  `index.json` cycle locked with a unique `mkstemp` temp. Dead `LLAMACPP_RELEASE` import removed.
+- Version `0.4.2` in `kaggleui/__init__.py`, `pyproject.toml`, `web/package.json`; bundle rebuilt;
+  `dist/kaggleui-0.4.2-py3-none-any.whl` built (51 static assets, bundle stamped `0.4.2`).
 - Verification: `ruff check kaggleui tests` → `All checks passed!`; affected modules →
   `33 passed in 57.21s`; full suite → `3 failed, 355 passed, 1 skipped in 138.40s` (only
-  `psutil.AccessDenied` in `test_shutdown.py`). `docs/implementation/progress.md` appended.
+  `psutil.AccessDenied` in `test_shutdown.py`);
+  `python3 -m pytest -q tests/test_release_versions.py` → `3 passed`.
 
 ## Blockers
 
-- None for code work. Host limits unchanged (no `.venv`, python3 3.14.8, `/tmp` unwritable, no
-  android-arm64 `tsc` binary).
+- None for code work. Host limits unchanged: no `.venv`, `python3` 3.14.8, `/tmp` unwritable,
+  `pnpm build` fails on the missing android-arm64 `tsc` binary — build with
+  `cd web && pnpm exec vite build`, typecheck separately with the `dlx tsc@5.9.3` workaround.
+  Under that workaround `web/src/pages/{Access,Storage,System}.tsx` report pre-existing type errors
+  (unused `claudeShell`/`SectionTitle`, `System.tsx:35` missing argument); the files are untouched
+  by this release and CI's bundled `tsc` 7.0.2 has not been run here.
 
 ## Next actions
 
-1. Commit the work (six code files + four test modules + `ml/pipeline.py` + progress/bank notes);
-   nothing is committed yet.
-2. Consider a `0.4.2` patch bump (`kaggleui/__init__.py`, `pyproject.toml`, `web/package.json`, then
-   `pnpm build`) if these fixes ship as a release.
-3. Not run this session: `selftest --mock-engines --fake-hw t4x2` and `vite build`.
+1. Nothing pending. Next session: run `ruff check kaggleui` and the narrowest relevant `pytest`
+   module before editing to confirm the host baseline.
+2. Keep `memory.md` append-only; rewrite this file at session end (`/sync`).
+3. Append milestone-grade results to `docs/implementation/progress.md`, not here.

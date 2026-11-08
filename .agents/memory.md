@@ -73,3 +73,17 @@ failure modes already paid for.
   read path instead (it widens the unlocked window and still passes once serialised).
 - Host baseline for the full suite now: `3 failed, 355 passed, 1 skipped` — the three are
   `tests/test_shutdown.py::…` with `psutil.AccessDenied` (Android `/proc` restriction), not regressions.
+
+## 2026-11-08 — 0.4.2 release mechanics (host)
+
+- `cd web && pnpm build` is broken on this host (TypeScript 7.0.2 has no android-arm64 binary).
+  Build the bundle with `cd web && pnpm exec vite build` — vite itself is fine and stamps
+  `__APP_VERSION__` from `web/package.json`; typecheck separately with
+  `pnpm --package=typescript@5.9.3 dlx tsc -p . --noEmit`.
+- Under that 5.9.3 typecheck, `web/src/pages/{Access,Storage,System}.tsx` report pre-existing errors
+  (unused `claudeShell`, unused `SectionTitle`, `System.tsx:35` missing argument / `.note` access).
+  Untouched by 0.4.2; CI uses the bundled tsc 7.0.2, which has not been run on this host.
+- `uv build --wheel` needs a writable TMPDIR here: `TMPDIR="$HOME/.cache/kui-tmp" uv build --wheel`.
+  Wheel output goes to `dist/` (gitignored); bundles live in the gitignored `kaggleui/static/`.
+  Verify a wheel carries the bundle with
+  `python3 -c "import zipfile; z=zipfile.ZipFile('dist/kaggleui-0.4.2-py3-none-any.whl'); …"`.

@@ -87,3 +87,18 @@ failure modes already paid for.
   Wheel output goes to `dist/` (gitignored); bundles live in the gitignored `kaggleui/static/`.
   Verify a wheel carries the bundle with
   `python3 -c "import zipfile; z=zipfile.ZipFile('dist/kaggleui-0.4.2-py3-none-any.whl'); …"`.
+
+## 2026-11-08 — remotes and publishing (0.4.2)
+
+- Two remotes: `origin` = `https://github.com/UltraFEmotes/KaggleUI`, `self` =
+  `https://github.com/therealfreddied/KaggleUI`. The credential on this host authenticates as
+  `therealfreddied`, which has **no write access to `origin`** — `git push origin main v0.4.2` fails
+  with `403 Permission to UltraFEmotes/KaggleUI.git denied to therealfreddied`.
+  `git push self main v0.4.2` works (`328aa68..0c6ccf0`). Until someone grants access, `origin` stays
+  at `572d670` (v0.2.16) while `self` carries everything through `0c6ccf0` + tag `v0.4.2`.
+- Before this push, local `main` was 13 commits ahead of `origin` — the repo had only ever been
+  published up to v0.2.16. Pretagged releases `v0.3.x`, `v0.4.0`, `v0.4.1` are local-only history that
+  the first successful push publishes wholesale; check with `git log --oneline origin/main..main`.
+- The wheel is never published by the build step: `dist/` is gitignored, so
+  `uv build --wheel` leaves a local artifact only. Uploading (PyPI or a GitHub release asset) is a
+  separate manual action.

@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from .. import __version__
+from .. import secretstore
 from ..schemas import WorkspaceDocument
 from .workspace import (
     WorkspaceError,
@@ -33,7 +34,26 @@ if TYPE_CHECKING:
 
 API = "https://api.github.com"
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+REPO_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 MAX_DOC_BYTES = 950_000
+# Opens GitHub's classic-token form pre-filled with the one scope sync needs.
+TOKEN_URL = "https://github.com/settings/tokens/new?scopes=repo&description=KaggleUI%20workspace"
+
+
+async def _github_request(token: str, method: str, path: str, *, body: dict | None = None,
+                          accept: str = "application/vnd.github+json",
+                          timeout: float = 20.0) -> tuple[int, Any, str]:
+    """One GitHub call. Returns (status, parsed json, oauth scopes header)."""
+    url = path if path.startswith("http") else f"{API}{path}"
+    headers = {"Authorization": f"Bearer {token}", "Accept": accept,
+               "X-GitHub-Api-Version": "2022-11-28", "User-Agent": f"KaggleUI/{__version__}"}
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        response = await client.request(method, url, headers=headers, json=body)
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    return response.status_code, payload, response.headers.get("x-oauth-scopes", "")
 
 class SyncError(Exception):
     """Remote unreachable, credential missing, or the change cannot be applied safely."""
@@ -73,31 +93,28 @@ class GitHubWorkspace:
         self.token = token
         self.timeout = timeout
 
-    def _headers(self, accept: str = "application/vnd.github+json") -> dict[str, str]:
-        return {"Authorization": f"Bearer {self.token}", "Accept": accept,
-                "X-GitHub-Api-Version": "2022-11-28", "User-Agent": f"KaggleUI/{__version__}"}
-
-    def _url(self, path: str) -> str:
-        return f"{API}/repos/{self.repo}/contents/{path}"
+    def _url_path(self, path: str | None = None, ref: str | None = None) -> str:
+        target = f"/repos/{self.repo}/contents/{(path or self.path).lstrip('/')}"
+        branch = self.branch if ref is None else ref
+        return f"{target}?ref={branch}" if branch else target
 
     async def get_file(self, path: str | None = None, ref: str | None = None) -> tuple[dict, str] | None:
-        params = {"ref": ref} if ref else {"ref": self.branch}
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(self._url(path or self.path), headers=self._headers(), params=params)
-        if response.status_code == 404:
+        target = self._url_path(path or self.path, ref)
+        code, payload, _ = await _github_request(self.token, "GET", target, timeout=self.timeout)
+        if code == 404:
             return None
-        if response.status_code in (401, 403):
+        if code in (401, 403):
             raise SyncError("GitHub rejected the workspace token (check repository contents permission)")
-        if response.status_code != 200:
-            raise SyncError(f"GitHub returned {response.status_code} while reading the workspace")
-        payload = response.json()
+        if code != 200:
+            raise SyncError(f"GitHub returned {code} while reading the workspace")
         if payload.get("type") != "file":
             raise SyncError("workspace path is not a file")
         encoded = payload.get("content") or ""
         if payload.get("encoding") != "base64" or not encoded:
             raise SyncError("GitHub did not return file content (the workspace may exceed 1 MB)")
+        # GitHub wraps base64 at 60 columns; validate=True rejects the newlines it inserts.
         try:
-            raw = base64.b64decode(encoded, validate=True)
+            raw = base64.b64decode("".join(encoded.split()), validate=True)
         except ValueError as exc:
             raise SyncError("GitHub returned invalid workspace content") from exc
         try:
@@ -107,6 +124,18 @@ class GitHubWorkspace:
         except ValueError as exc:
             raise SyncError("Remote workspace is not valid JSON") from exc
         return (doc if isinstance(doc, dict) else {}), str(payload.get("sha") or "")
+
+    async def resolve_branch(self) -> str:
+        """The repository's default branch; a private repo is only usable once it has one."""
+        code, payload, _ = await _github_request(self.token, "GET", f"/repos/{self.repo}",
+                                                 timeout=self.timeout)
+        if code == 404:
+            raise SyncError(f"GitHub cannot see {self.repo}; check the name or create it from this page")
+        if code in (401, 403):
+            raise SyncError("GitHub rejected the workspace token (check the repo scope)")
+        if code != 200:
+            raise SyncError(f"GitHub returned {code} while reading {self.repo}")
+        return str(payload.get("default_branch") or "main")
 
     async def put_file(self, data: dict, *, sha: str | None, message: str,
                        path: str | None = None) -> str:
@@ -120,27 +149,40 @@ class GitHubWorkspace:
                                    "content": base64.b64encode(body).decode(), "branch": self.branch}
         if sha:
             payload["sha"] = sha
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.put(self._url(path or self.path), headers=self._headers(), json=payload)
-        if response.status_code == 409:
+        target = self._url_path(path)
+        code, response, _ = await _github_request(self.token, "PUT", target, body=payload,
+                                                  timeout=self.timeout)
+        if code == 422 and "branch" in str(response.get("message", "")).lower():
+            # The branch in settings does not exist yet; write to the repository's default branch.
+            self.branch = await self.resolve_branch()
+            payload["branch"] = self.branch
+            code, response, _ = await _github_request(self.token, "PUT", target, body=payload,
+                                                      timeout=self.timeout)
+        if code in (409, 422) and "empty" in str(response.get("message", "")).lower():
+            # A repository without commits has no branch or parent to write against yet.
+            bootstrap = {k: v for k, v in payload.items() if k not in {"branch", "sha"}}
+            code, response, _ = await _github_request(self.token, "PUT", target, body=bootstrap,
+                                                      timeout=self.timeout)
+        if code == 409:
             raise SyncConflict("GitHub rejected the write because the file changed; refresh and compare")
-        if response.status_code in (401, 403):
-            raise SyncError("GitHub rejected the workspace token (contents:write is required)")
-        if response.status_code not in (200, 201):
-            raise SyncError(f"GitHub returned {response.status_code} while saving the workspace")
-        return str(response.json().get("content", {}).get("sha") or "")
+        if code in (401, 403):
+            raise SyncError("GitHub rejected the workspace token (the 'repo' scope is required)")
+        if code not in (200, 201):
+            reason = str(response.get("message") or "").strip()
+            raise SyncError(f"GitHub returned {code} while saving {self.path}"
+                            + (f": {reason}" if reason else ""))
+        return str(response.get("content", {}).get("sha") or "")
 
     async def history(self, limit: int = 20) -> list[dict[str, Any]]:
-        params = {"path": self.path, "sha": self.branch, "per_page": str(max(1, min(limit, 100)))}
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(f"{API}/repos/{self.repo}/commits", headers=self._headers(),
-                                        params=params)
-        if response.status_code == 404:
+        query = f"?path={self.path}&sha={self.branch}&per_page={max(1, min(limit, 100))}"
+        code, payload, _ = await _github_request(self.token, "GET", f"/repos/{self.repo}/commits{query}",
+                                                 timeout=self.timeout)
+        if code == 404:
             return []
-        if response.status_code != 200:
-            raise SyncError(f"GitHub returned {response.status_code} while reading history")
+        if code != 200:
+            raise SyncError(f"GitHub returned {code} while reading history")
         out = []
-        for item in response.json():
+        for item in payload if isinstance(payload, list) else []:
             commit = item.get("commit", {})
             out.append({"sha": item.get("sha"), "message": commit.get("message", ""),
                         "date": commit.get("committer", {}).get("date"), "url": item.get("html_url")})
@@ -149,9 +191,135 @@ class GitHubWorkspace:
 def _client(state: AppState, token: str | None = None) -> GitHubWorkspace:
     cfg = state.settings.workspace
     if not cfg.repo.strip():
-        raise SyncError("Workspace sync is not configured; set a repository in Workspace settings")
-    secret = token or os.environ.get(cfg.token_secret or "GITHUB_TOKEN")
+        raise SyncError("Workspace sync is not linked to a repository yet; create or pick one first")
+    secret = token or _token(state)
     return GitHubWorkspace(cfg.repo, cfg.branch, cfg.path, secret or "")
+
+
+def _token(state: AppState) -> str:
+    cfg = state.settings.workspace
+    name = cfg.token_secret or "GITHUB_TOKEN"
+    return secretstore.get(name) or os.environ.get(name) or ""
+
+
+def _require_token(state: AppState) -> str:
+    token = _token(state)
+    if not token:
+        raise SyncError("Add a GitHub token first; the button opens the page that creates one with "
+                        "the 'repo' scope")
+    return token
+
+
+async def save_token(state: AppState, token: str) -> dict[str, Any]:
+    """Verify a pasted classic token, store it, and report the account it belongs to."""
+    value = token.strip()
+    if not value:
+        raise SyncError("Paste a GitHub token first")
+    code, user, header_scopes = await _github_request(value, "GET", "/user")
+    if code == 401:
+        raise SyncError("GitHub rejected that token (401 bad credentials); it may be mistyped or revoked")
+    if code != 200:
+        raise SyncError(f"GitHub returned {code} while checking the token")
+    name = (state.settings.workspace.token_secret or "GITHUB_TOKEN").strip() or "GITHUB_TOKEN"
+    if name in secretstore.EDITABLE:
+        secretstore.set_secret(name, value)
+    else:  # a custom env name cannot be persisted, but the running server can use it
+        os.environ[name] = value
+    scopes = [s.strip() for s in header_scopes.split(",") if s.strip()]
+    out: dict[str, Any] = {"ok": True, "token_set": True, "login": user.get("login"),
+                           "scopes": scopes, "token_secret": name, "token_url": TOKEN_URL,
+                           "warning": None}
+    if scopes and "repo" not in scopes:
+        out["warning"] = ("That token works but lacks the 'repo' scope, so it cannot create a "
+                          "repository or commit. Create one from the link with 'repo' checked.")
+    return out
+
+
+async def github_info(state: AppState) -> dict[str, Any]:
+    """Whether sync can talk to GitHub, and what the saved token can do."""
+    cfg = state.settings.workspace
+    token = _token(state)
+    out: dict[str, Any] = {"token_set": bool(token), "token_url": TOKEN_URL, "login": None,
+                           "scopes": [], "verified": False, "error": None,
+                           "repo": cfg.repo, "branch": cfg.branch, "path": cfg.path,
+                           "enabled": cfg.enabled}
+    if not token:
+        return out
+    code, user, header_scopes = await _github_request(token, "GET", "/user")
+    if code != 200:
+        out["error"] = f"GitHub returned {code} for the saved token; paste a new one"
+        return out
+    out["login"] = user.get("login")
+    out["scopes"] = [s.strip() for s in header_scopes.split(",") if s.strip()]
+    out["verified"] = True
+    return out
+
+
+async def link_repository(state: AppState, *, mode: str = "existing", repo: str = "",
+                          name: str = "", private: bool = True) -> dict[str, Any]:
+    """Point sync at a repository, creating a private one with a first commit when asked to.
+
+    ``auto_init`` matters: GitHub's contents API returns 404 for a repository without commits, which
+    is indistinguishable from "workspace missing" and was previously left for the user to fix by
+    hand on github.com.
+    """
+    token = _require_token(state)
+    cfg = state.settings.workspace
+    code, user, _ = await _github_request(token, "GET", "/user")
+    if code == 401:
+        raise SyncError("GitHub rejected the saved token; paste a new one")
+    if code != 200:
+        raise SyncError(f"GitHub returned {code} while checking the token")
+    login = str(user.get("login") or "")
+    created = False
+    if mode == "create":
+        slug = (name or "").strip().rstrip(".git")
+        slug = slug.split("/")[-1] if "/" in slug else slug
+        slug = slug or "kaggleui-workspace"
+        if not REPO_NAME_RE.match(slug):
+            raise SyncError("repository names may contain letters, digits, '.', '_' and '-'")
+        code, payload, _ = await _github_request(
+            token, "POST", "/user/repos",
+            body={"name": slug, "private": bool(private), "auto_init": True,
+                  "description": "KaggleUI workspace"})
+        if code == 422:  # exists already: adopting it is what the user meant
+            full_name, branch = f"{login}/{slug}", ""
+        elif code in (200, 201):
+            full_name = str(payload.get("full_name") or f"{login}/{slug}")
+            branch = str(payload.get("default_branch") or "")
+            created = True
+        else:
+            reason = str(payload.get("message") or "").strip()
+            raise SyncError(f"GitHub could not create the repository ({code})"
+                            + (f": {reason}" if reason else ""))
+        if not created:
+            repo = full_name
+    if mode != "create" or not created:
+        full_name = (repo or "").strip()
+        if not REPO_RE.match(full_name):
+            raise SyncError("Repository must look like owner/name")
+        code, payload, _ = await _github_request(token, "GET", f"/repos/{full_name}")
+        if code == 404:
+            raise SyncError(f"GitHub cannot see {full_name}. Let KaggleUI create a private repo, "
+                            "or check the name and that the token has the 'repo' scope")
+        if code in (401, 403):
+            raise SyncError("GitHub rejected the token for that repository (needs the 'repo' scope)")
+        if code != 200:
+            raise SyncError(f"GitHub returned {code} while reading {full_name}")
+        perms = payload.get("permissions") or {}
+        if perms and not perms.get("push"):
+            raise SyncError(f"{full_name} is visible to the token but it cannot push to it")
+        branch = str(payload.get("default_branch") or "")
+    branch = branch or "main"
+    state.settings.workspace = cfg.model_copy(
+        update={"enabled": True, "repo": full_name, "branch": branch,
+                "path": cfg.path.strip() or "workspaces/default"})
+    state.workbench.save_settings(state.settings.model_dump())
+    state.bus.publish("settings", state.settings.model_dump())
+    schedule_auto_backup(state)
+    return {"repo": full_name, "branch": branch, "created": created, "private": bool(private),
+            "url": f"https://github.com/{full_name}", "path": state.settings.workspace.path,
+            "login": login, "token_url": TOKEN_URL}
 
 def _state(state: AppState) -> dict[str, Any]:
     return state.workbench.workspace_state()
@@ -173,14 +341,20 @@ async def status(state: AppState) -> dict[str, Any]:
     out: dict[str, Any] = {
         "configured": bool(cfg.enabled and cfg.repo.strip()),
         "repo": cfg.repo, "branch": cfg.branch, "path": cfg.path,
-        "token_secret": cfg.token_secret, "token_set": bool(os.environ.get(cfg.token_secret or "GITHUB_TOKEN")),
+        "token_secret": cfg.token_secret, "token_set": bool(_token(state)),
+        "token_url": TOKEN_URL,
         "workspace_id": local.meta.workspace_id, "name": local.meta.name,
         "local_hash": local_hash, "local_changed": bool(info.get("last_backup_hash")) and
         local_hash != info.get("last_backup_hash"),
         "last_backup_at": info.get("last_backup_at"), "last_restore_at": info.get("last_restore_at"),
         "remote_sha": info.get("remote_sha"), "remote_available": False, "remote_changed": False,
-        "conflict": False, "error": None,
+        "conflict": False, "error": None, "document_path": "",
     }
+    try:
+        out["document_path"] = _document_path(cfg.path)
+    except SyncError as exc:
+        out["error"] = str(exc)
+        return out
     if not out["configured"] or not out["token_set"]:
         return out
     if info.get("config_key") and info.get("config_key") != _config_key(state):

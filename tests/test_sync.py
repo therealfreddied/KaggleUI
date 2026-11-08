@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 
 import pytest
 
@@ -120,3 +122,121 @@ async def test_disabling_auto_backup_cancels_the_pending_commit(state, connect):
     await asyncio.sleep(0)
     assert pending.cancelled()
     assert fake.puts == []
+
+
+class FakeAPI:
+    """Stands in for GitHub's REST API; records every call so tests can assert the wiring."""
+
+    def __init__(self, routes):
+        self.routes = routes  # list of (method, path_prefix, status, payload)
+        self.calls = []
+
+    async def __call__(self, token, method, path, *, body=None, accept=None, timeout=None):
+        self.calls.append({"method": method, "path": path, "body": body})
+        for want_method, prefix, status, payload in self.routes:
+            if method == want_method and path.startswith(prefix):
+                return status, payload, "repo"
+        raise AssertionError(f"unexpected GitHub call {method} {path}")
+
+
+def test_wrapped_base64_file_content_decodes(monkeypatch):
+    """GitHub wraps base64 at 60 columns; validate=True used to reject its own response."""
+    doc = {"meta": {"workspace_id": "abc", "name": "Unit"}, "deployments": []}
+    encoded = base64.b64encode(json.dumps(doc).encode()).decode()
+    wrapped = "\n".join(encoded[i:i + 60] for i in range(0, len(encoded), 60)) + "\n"
+    api = FakeAPI([("GET", "/repos/owner/repo/contents/", 200,
+                    {"type": "file", "sha": "abc123", "encoding": "base64", "content": wrapped})])
+    monkeypatch.setattr(sync, "_github_request", api)
+    client = sync.GitHubWorkspace("owner/repo", "main", "workspaces/default", "t")
+    payload, sha = asyncio.run(client.get_file())
+    assert payload == doc
+    assert sha == "abc123"
+
+
+def test_save_token_verifies_and_stores(state, monkeypatch):
+    stored = {}
+    monkeypatch.setattr(sync.secretstore, "set_secret", lambda name, value: stored.update({name: value}))
+    api = FakeAPI([("GET", "/user", 200, {"login": "octocat"})])
+    monkeypatch.setattr(sync, "_github_request", api)
+    result = asyncio.run(sync.save_token(state, "  ghp_example  "))
+    assert result["login"] == "octocat"
+    assert stored == {"GITHUB_TOKEN": "ghp_example"}
+    assert result["warning"] is None
+
+
+def test_save_token_rejects_bad_credentials(state, monkeypatch):
+    monkeypatch.setattr(sync, "_github_request",
+                        FakeAPI([("GET", "/user", 401, {"message": "Bad credentials"})]))
+    with pytest.raises(sync.SyncError, match="rejected"):
+        asyncio.run(sync.save_token(state, "nope"))
+
+
+def test_link_repository_creates_private_repo_with_first_commit(state, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    api = FakeAPI([
+        ("GET", "/user", 200, {"login": "octocat"}),
+        ("POST", "/user/repos", 201, {"full_name": "octocat/kaggleui-workspace",
+                                      "default_branch": "main"}),
+    ])
+    monkeypatch.setattr(sync, "_github_request", api)
+    result = asyncio.run(sync.link_repository(state, mode="create", name="kaggleui-workspace"))
+    assert result["created"] is True
+    assert result["repo"] == "octocat/kaggleui-workspace"
+    body = [c for c in api.calls if c["method"] == "POST"][0]["body"]
+    assert body["private"] is True
+    assert body["auto_init"] is True
+    assert state.settings.workspace.repo == "octocat/kaggleui-workspace"
+    assert state.settings.workspace.branch == "main"
+    assert state.settings.workspace.enabled is True
+
+
+def test_link_repository_reports_missing_existing_repo(state, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(sync, "_github_request", FakeAPI([
+        ("GET", "/user", 200, {"login": "octocat"}),
+        ("GET", "/repos/octocat/nope", 404, {"message": "Not Found"}),
+    ]))
+    with pytest.raises(sync.SyncError, match="create a private repo"):
+        asyncio.run(sync.link_repository(state, mode="existing", repo="octocat/nope"))
+
+
+def test_put_file_falls_back_to_the_default_branch(monkeypatch):
+    """A repo whose default branch is master must not fail because settings say main."""
+    calls = []
+
+    async def api(token, method, path, *, body=None, accept=None, timeout=None):
+        calls.append((method, path, body))
+        if method == "PUT" and (body or {}).get("branch") == "main":
+            return 422, {"message": "Branch main not found"}, ""
+        if method == "GET" and path == "/repos/owner/repo":
+            return 200, {"default_branch": "master"}, ""
+        if method == "PUT":
+            return 201, {"content": {"sha": "new"}}, ""
+        raise AssertionError(f"unexpected {method} {path}")
+
+    monkeypatch.setattr(sync, "_github_request", api)
+    client = sync.GitHubWorkspace("owner/repo", "main", "workspaces/default", "t")
+    sha = asyncio.run(client.put_file({"meta": {}}, sha=None, message="x"))
+    assert sha == "new"
+    assert client.branch == "master"
+    assert calls[-1][2]["branch"] == "master"
+
+
+def test_put_file_bootstraps_an_empty_repository(monkeypatch):
+    """A repo created without a first commit must still accept the first workspace document."""
+    calls = []
+
+    async def api(token, method, path, *, body=None, accept=None, timeout=None):
+        calls.append((method, path, dict(body or {})))
+        if method == "PUT" and "branch" in (body or {}):
+            return 409, {"message": "Git Repository is empty."}, ""
+        if method == "PUT":
+            return 201, {"content": {"sha": "first"}}, ""
+        raise AssertionError(f"unexpected {method} {path}")
+
+    monkeypatch.setattr(sync, "_github_request", api)
+    client = sync.GitHubWorkspace("owner/repo", "main", "workspaces/default", "t")
+    sha = asyncio.run(client.put_file({"meta": {}}, sha="stale", message="init"))
+    assert sha == "first"
+    assert "branch" not in calls[-1][2]
+    assert "sha" not in calls[-1][2]

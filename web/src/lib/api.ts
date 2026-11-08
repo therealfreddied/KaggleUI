@@ -30,8 +30,10 @@ import type {
   ManagementToken,
   WorkspaceDocument,
   WorkspacePreview,
+  WorkspaceRepoLink,
   WorkspaceSettings,
   WorkspaceStatus,
+  WorkspaceTokenSave,
 } from "./types";
 
 export class ApiError extends Error {
@@ -52,7 +54,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     let msg = res.statusText;
     try {
       const data = await res.json();
-      msg = data?.detail ?? data?.error?.message ?? data?.error ?? msg;
+      const detail = data?.detail ?? data?.error?.message ?? data?.error ?? msg;
+      // Conflict payloads carry {message, shas}; show the message instead of a JSON blob.
+      msg = detail && typeof detail === "object" && typeof detail.message === "string" ? detail.message : detail;
       if (typeof msg !== "string") msg = JSON.stringify(msg);
     } catch {
       /* not json */
@@ -119,6 +123,14 @@ export const api = {
       method: "POST", body: json({ confirm: true, document, replace, replace_connections: replaceConnections }),
     }),
   workspaceStatus: () => request<WorkspaceStatus>("/_kui/api/workspace/status"),
+  workspaceGithub: () => request<{
+    token_set: boolean; token_url: string; login: string | null; scopes: string[]; verified: boolean;
+    error: string | null; repo: string; branch: string; path: string; enabled: boolean;
+  }>("/_kui/api/workspace/github"),
+  saveWorkspaceToken: (token: string) =>
+    request<WorkspaceTokenSave>("/_kui/api/workspace/token", { method: "PUT", body: json({ token }) }),
+  linkWorkspaceRepo: (body: { mode: "create" | "existing"; name?: string; repo?: string; private?: boolean }) =>
+    request<WorkspaceRepoLink>("/_kui/api/workspace/repo", { method: "POST", body: json(body) }),
   workspacePreview: () => request<WorkspacePreview>("/_kui/api/workspace/preview"),
   backupWorkspace: (body: { force?: boolean; message?: string; confirm?: boolean } = {}) =>
     request<{ status: string; sha?: string | null; document_hash?: string; path?: string; bytes?: number }>(

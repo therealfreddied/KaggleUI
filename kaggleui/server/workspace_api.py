@@ -13,6 +13,7 @@ import signal
 import time
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import ValidationError
 
@@ -115,6 +116,32 @@ async def preview_workspace(request: Request):
 async def sync_status(request: Request):
     st = _scope(request, "workspace")
     return await workspace_sync.status(st)
+
+
+@router.get("/workspace/github")
+async def workspace_github(request: Request):
+    st = _scope(request, "workspace")
+    return await workspace_sync.github_info(st)
+
+
+@router.put("/workspace/token")
+async def workspace_token(request: Request, body: dict[str, Any]):
+    st = _scope(request, "workspace")
+    try:
+        return await workspace_sync.save_token(st, str(body.get("token") or ""))
+    except (workspace_sync.SyncError, httpx.HTTPError) as exc:
+        raise _sync_error(exc) from exc
+
+
+@router.post("/workspace/repo")
+async def workspace_repo(request: Request, body: dict[str, Any]):
+    st = _scope(request, "workspace")
+    try:
+        return await workspace_sync.link_repository(
+            st, mode=str(body.get("mode") or "existing"), repo=str(body.get("repo") or ""),
+            name=str(body.get("name") or ""), private=bool(body.get("private", True)))
+    except (workspace_sync.SyncError, httpx.HTTPError) as exc:
+        raise _sync_error(exc) from exc
 
 @router.post("/workspace/backup")
 async def backup_workspace(request: Request, body: dict[str, Any] | None = None):

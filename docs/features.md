@@ -225,7 +225,7 @@ Storage connections describe where artifacts and model files can be copied:
 | `local` | Path | A mounted disk or network volume. |
 | `rclone` | Remote and path | Any rclone-supported backend. |
 | `hf` | Repository and token secret | Hugging Face repositories. |
-| `github` | Repository, branch, path, token secret | Snapshots and workspace documents. GitHub is not used for binaries. |
+| `github` | Repository, branch, path, stored token | Snapshots and workspace documents; KaggleUI can create the private repository. GitHub is not used for binaries. |
 
 A connection can be read-only, and secrets are referenced by name rather than stored in the connection record. The storage API lists connections, checks reachability, and copies artifacts with progress.
 
@@ -250,6 +250,7 @@ Operations:
 - **Backup and restore** copy workspace documents to a storage connection and restore them with checksums.
 - **History and rollback** keep prior workspace snapshots; rollback requires confirmation.
 - **Sync** compares the local workspace with a GitHub or storage destination, shows added, changed, and deleted entries, and writes a snapshot only after review.
+- **GitHub setup takes one paste.** The Workspace page asks for a classic token (with a button that opens GitHub's token form pre-filled with the `repo` scope), then either creates a private repository with an initial commit or links an existing one. The workspace directory and document are created by the first backup; nothing has to be made by hand on github.com.
 - **Deployment sets** group deployment specs so a machine can be reproduced with one activation.
 - **Model backups** preserve artifact bytes separately from workspace metadata.
 

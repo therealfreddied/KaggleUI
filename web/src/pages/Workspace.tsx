@@ -4,9 +4,11 @@ import {
   Check,
   CloudDownload,
   CloudUpload,
+  ExternalLink,
   GitBranch,
   History,
   KeyRound,
+  PlusCircle,
   RefreshCw,
   ShieldOff,
 } from "lucide-react";
@@ -15,6 +17,9 @@ import { useEffect, useState } from "react";
 import { Button, Chip, Empty, Field, Input, SectionTitle, Select, Toggle, useToast } from "../components/ui";
 import { ApiError, api } from "../lib/api";
 import type { ManagementToken, WorkspacePreview, WorkspaceSettings } from "../lib/types";
+
+// GitHub's classic-token form, pre-filled with the one scope workspace sync needs.
+const TOKEN_URL = "https://github.com/settings/tokens/new?scopes=repo&description=KaggleUI%20workspace";
 
 function errorText(err: unknown) {
   if (err instanceof ApiError) return err.message;
@@ -65,15 +70,24 @@ function ConfigForm({ initial }: { initial: WorkspaceSettings }) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<WorkspaceSettings>(initial);
   const [busy, setBusy] = useState(false);
+  const [token, setToken] = useState("");
+  const [tokenBusy, setTokenBusy] = useState(false);
+  const [newRepo, setNewRepo] = useState("kaggleui-workspace");
+  const [linkBusy, setLinkBusy] = useState<"" | "create" | "existing">("");
+  const status = useQuery({ queryKey: ["workspace-status"], queryFn: api.workspaceStatus, retry: false });
   const set = <K extends keyof WorkspaceSettings>(key: K, value: WorkspaceSettings[K]) =>
     setDraft((old) => ({ ...old, [key]: value }));
+
+  function refresh() {
+    queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
+    queryClient.invalidateQueries({ queryKey: ["workspace"] });
+  }
 
   async function save() {
     setBusy(true);
     try {
       await api.configureWorkspace(draft);
-      queryClient.invalidateQueries({ queryKey: ["workspace-status"] });
-      queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      refresh();
       toast("Workspace settings saved");
     } catch (err) {
       toast(`Could not save: ${errorText(err)}`, "error");
@@ -82,24 +96,115 @@ function ConfigForm({ initial }: { initial: WorkspaceSettings }) {
     }
   }
 
+  async function saveToken() {
+    setTokenBusy(true);
+    try {
+      const res = await api.saveWorkspaceToken(token.trim());
+      setToken("");
+      refresh();
+      if (res.warning) toast(res.warning, "error");
+      else toast(`Token accepted${res.login ? ` for ${res.login}` : ""}`);
+    } catch (err) {
+      toast(`GitHub did not accept that token: ${errorText(err)}`, "error");
+    } finally {
+      setTokenBusy(false);
+    }
+  }
+
+  async function link(mode: "create" | "existing") {
+    setLinkBusy(mode);
+    try {
+      const linked = mode === "create"
+        ? await api.linkWorkspaceRepo({ mode, name: newRepo.trim(), private: true })
+        : await api.linkWorkspaceRepo({ mode, repo: draft.repo.trim() });
+      setDraft((old) => ({ ...old, enabled: true, repo: linked.repo, branch: linked.branch }));
+      refresh();
+      toast(`${linked.created ? "Created" : "Linked"} ${linked.repo} on ${linked.branch}`);
+      if (mode === "create") {
+        try {
+          await api.backupWorkspace({ confirm: true, message: "Initial KaggleUI workspace" });
+          toast("Workspace pushed to GitHub");
+        } catch (err) {
+          toast(`Repository is ready, but the first backup failed: ${errorText(err)}`, "error");
+        }
+        refresh();
+      }
+    } catch (err) {
+      toast(`Could not link the repository: ${errorText(err)}`, "error");
+    } finally {
+      setLinkBusy("");
+    }
+  }
+
   return (
     <div className="space-y-4">
       <Toggle checked={draft.enabled} onChange={(v) => set("enabled", v)} label="Sync this workspace to GitHub"
         hint="Only portable configuration is synced: preferences, deployment definitions and sets, storage connections, and artifact references. Never model files, pids, ports or GPU claims." />
+
+      <div className="space-y-2.5 rounded-lg border border-line bg-panel p-3.5">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[13px] font-medium">1 · GitHub access</span>
+          <Chip tone={status.data?.token_set ? "info" : "warn"}>
+            {status.data?.token_set ? "Token saved" : "No token yet"}
+          </Chip>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <Input type="password" value={token} onChange={(e) => setToken(e.target.value)}
+            placeholder="Paste a classic token here" autoComplete="off" spellCheck={false} />
+          <Button busy={tokenBusy} disabled={!token.trim()} onClick={saveToken}>
+            <KeyRound className="size-4" /> Save token
+          </Button>
+          <a href={TOKEN_URL} target="_blank" rel="noreferrer" className="inline-flex">
+            <Button><ExternalLink className="size-4" /> Create a classic token</Button>
+          </a>
+        </div>
+        <p className="text-[12px] text-fg-3">
+          The link opens GitHub's form with the <code className="font-mono">repo</code> scope pre-checked. The token is
+          stored on the server (mode 600) and never sent back to this page.
+        </p>
+      </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Repository" hint="owner/name, for example alice/kaggleui-workspace">
-          <Input value={draft.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name" autoComplete="off" />
-        </Field>
+        <div className="space-y-2 rounded-lg border border-line bg-panel p-3.5">
+          <div className="text-[13px] font-medium">2a · Create a private repository</div>
+          <div className="flex gap-2">
+            <Input value={newRepo} onChange={(e) => setNewRepo(e.target.value)} placeholder="kaggleui-workspace"
+              autoComplete="off" />
+            <Button variant="primary" busy={linkBusy === "create"} onClick={() => link("create")}>
+              <PlusCircle className="size-4" /> Create
+            </Button>
+          </div>
+          <p className="text-[12px] text-fg-3">
+            Made under the token's account with an initial commit, then this workspace is pushed to it.
+          </p>
+        </div>
+        <div className="space-y-2 rounded-lg border border-line bg-panel p-3.5">
+          <div className="text-[13px] font-medium">2b · Or use an existing repository</div>
+          <div className="flex gap-2">
+            <Input value={draft.repo} onChange={(e) => set("repo", e.target.value)} placeholder="owner/name"
+              autoComplete="off" />
+            <Button busy={linkBusy === "existing"} disabled={!draft.repo.trim()} onClick={() => link("existing")}>
+              <GitBranch className="size-4" /> Link
+            </Button>
+          </div>
+          <p className="text-[12px] text-fg-3">
+            Verifies the token can push there. The workspace directory is created by the first backup.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Branch">
           <Input value={draft.branch} onChange={(e) => set("branch", e.target.value)} placeholder="main" autoComplete="off" />
         </Field>
-        <Field label="Path" hint="A directory in the repository; one workspace document lives there.">
+        <Field label="Path" hint="Repository-relative directory for this workspace's document.">
           <Input value={draft.path} onChange={(e) => set("path", e.target.value)} placeholder="workspaces/default" autoComplete="off" />
         </Field>
-        <Field label="Token secret" hint="The name of an environment/secret entry, never the token itself.">
+        <Field label="Token secret" hint="Secret name holding the token; GITHUB_TOKEN unless you renamed it.">
           <Input value={draft.token_secret} onChange={(e) => set("token_secret", e.target.value)} placeholder="GITHUB_TOKEN" autoComplete="off" />
         </Field>
       </div>
+
       <div className="grid gap-3 sm:grid-cols-2">
         <Toggle checked={draft.restore_on_launch} onChange={(v) => set("restore_on_launch", v)}
           label="Restore on launch" hint="A fresh KaggleUI instance pulls this workspace before printing the link. Local unsaved changes win." />
@@ -110,9 +215,9 @@ function ConfigForm({ initial }: { initial: WorkspaceSettings }) {
         <Toggle checked={draft.publish_discovery} onChange={(v) => set("publish_discovery", v)}
           label="Publish discovery document" hint="Public metadata only, with no endpoints, tokens or model paths." />
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" busy={busy} onClick={save}><Check className="size-4" /> Save workspace settings</Button>
-        <span className="text-[12px] text-fg-3">The GitHub token is read from the server environment, never stored here.</span>
+        <span className="text-[12px] text-fg-3">Saved secrets never leave the server.</span>
       </div>
     </div>
   );
@@ -122,7 +227,8 @@ function PreviewCard({ preview }: { preview: WorkspacePreview | null }) {
   if (!preview) return null;
   if (!preview.exists) {
     return <p className="rounded-lg border border-line bg-panel p-3 text-[13px] text-fg-2">
-      No workspace document exists at this path yet. Back up to create one.
+      Nothing is stored in the repository yet. <span className="font-medium">Back up now</span> writes the
+      first document, creating the directory automatically.
     </p>;
   }
   const diff = preview.diff;

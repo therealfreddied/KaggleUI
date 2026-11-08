@@ -281,6 +281,24 @@ def cmd_workspace(args, store: ProfileStore) -> int:
         _print(args, client.post("/_kui/api/workspace/restore",
                                  {"confirm": True, "resolution": args.resolution, "sha": args.sha}))
         return 0
+    if args.action == "repo":
+        if bool(args.create) == bool(args.use):
+            raise ProfileError("pass exactly one of --create NAME or --use OWNER/NAME")
+        payload = {"mode": "create", "private": True} if args.create else {"mode": "existing"}
+        if args.create:
+            payload["name"] = args.create
+        else:
+            payload["repo"] = args.use
+        _print(args, client.post("/_kui/api/workspace/repo", payload))
+        return 0
+    if args.action == "token":
+        if not args.stdin:
+            raise ProfileError("pass --stdin and pipe the token in; it is never echoed")
+        token = sys.stdin.read().strip()
+        if not token:
+            raise ProfileError("no token on stdin")
+        _print(args, client.put("/_kui/api/workspace/token", {"token": token}))
+        return 0
     if args.action == "history":
         _print(args, client.get("/_kui/api/workspace/history", limit=args.limit))
         return 0
@@ -484,6 +502,11 @@ def build_parser() -> argparse.ArgumentParser:
     wrollback = wsub.add_parser("rollback")
     wrollback.add_argument("sha")
     wrollback.add_argument("--confirm", action="store_true")
+    wrepo = wsub.add_parser("repo", help="create a private repo or link an existing one")
+    wrepo.add_argument("--create", metavar="NAME", help="create this private repo under the token's account")
+    wrepo.add_argument("--use", metavar="OWNER/NAME", help="link an existing repository")
+    wtoken = wsub.add_parser("token", help="store a GitHub token read from stdin")
+    wtoken.add_argument("--stdin", action="store_true", help="read the token from stdin (recommended)")
 
     models = sub.add_parser("models")
     msub = models.add_subparsers(dest="action", required=True)

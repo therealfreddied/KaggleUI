@@ -119,6 +119,8 @@ export interface WorkspaceStatus {
   path: string;
   token_secret: string;
   token_set: boolean;
+  token_url: string;
+  document_path: string;
   workspace_id: string;
   name: string;
   local_hash: string;
@@ -132,6 +134,29 @@ export interface WorkspaceStatus {
   last_backup_at: number | null;
   last_restore_at: number | null;
   error: string | null;
+}
+
+/** Result of linking sync to a repository (created by KaggleUI or picked from the account). */
+export interface WorkspaceRepoLink {
+  repo: string;
+  branch: string;
+  created: boolean;
+  private: boolean;
+  url: string;
+  path: string;
+  login: string | null;
+  token_url: string;
+}
+
+/** Result of storing a pasted GitHub token; never contains the value. */
+export interface WorkspaceTokenSave {
+  ok: boolean;
+  token_set: boolean;
+  login: string | null;
+  scopes: string[];
+  token_secret: string;
+  token_url: string;
+  warning: string | null;
 }
 
 export interface ManagementToken {

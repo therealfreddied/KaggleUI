@@ -122,7 +122,8 @@ def quantize(state: AppState, model: str, quant: str, *, name: str = "") -> dict
                         on_event=on_event)
     return record.public()
 
-async def convert(state: AppState, artifact: str, quant: str, *, out_name: str = "") -> dict:
+async def convert(state: AppState, artifact: str, quant: str, *, out_name: str = "",
+                  calibration: Path | None = None) -> dict:
     """One-shot adapter/model → GGUF job behind ``POST /workbench/ml/convert``.
 
     Adapter artifacts carry their base in ``provenance["base"]``; the worker merges before converting, so
@@ -151,6 +152,9 @@ async def convert(state: AppState, artifact: str, quant: str, *, out_name: str =
     spec = {"mode": "convert" if base_path else "gguf", "quant": quant, "out_dir": str(out),
             "scratch": str(out.parent), "python": None, "quantize_bin": None,
             "model_path": str(source_dir)}
+    if calibration is not None:
+        # Quantization reads the importance matrix built from this text; llama-quantize uses it.
+        spec["calibration"] = str(calibration)
     if base_path:
         spec["base_path"] = base_path
         spec["adapter_path"] = str(source_dir)

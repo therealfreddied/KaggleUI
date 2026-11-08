@@ -508,13 +508,41 @@ export function ModelDetail({
               />
               <Field label="Response cache">
                 <Select
-                  value={typeof options.cache === "string" ? options.cache : "inherit"}
-                  onChange={(e) => setOption("cache", e.target.value)}
+                  value={options.cache === false ? "off" : typeof options.cache === "string" ? options.cache : "inherit"}
+                  onChange={(e) => setOption("cache", e.target.value === "off" ? false : e.target.value)}
                 >
                   <option value="inherit">Follow global settings</option>
                   <option value="off">Off for this model</option>
                   <option value="exact">Exact match</option>
                   <option value="semantic">Semantic match</option>
+                </Select>
+              </Field>
+              <Toggle
+                checked={Boolean(options.terse)}
+                onChange={(v) => setOption("terse", v ? true : undefined)}
+                label="Terse replies"
+                hint="Tell the model to skip preamble and answer in the fewest words. Inherits the global setting when unset."
+              />
+              <Field label="Max prompt tokens" hint="Shrink prompts past this budget. Empty inherits the global setting.">
+                <Input
+                  type="number"
+                  min={256}
+                  step={256}
+                  value={options.max_prompt_tokens ?? ""}
+                  placeholder="Inherit"
+                  onChange={(e) => setOption("max_prompt_tokens", e.target.value ? Number(e.target.value) : undefined)}
+                />
+              </Field>
+              <Field label="Context strategy" hint="Which part of an over-budget prompt survives.">
+                <Select
+                  value={options.context_strategy ?? "inherit"}
+                  onChange={(e) => setOption("context_strategy", e.target.value)}
+                >
+                  <option value="inherit">Follow global settings</option>
+                  <option value="head">Keep the head</option>
+                  <option value="tail">Keep the tail</option>
+                  <option value="middle">Keep the middle</option>
+                  <option value="balanced">Balanced</option>
                 </Select>
               </Field>
             </div>

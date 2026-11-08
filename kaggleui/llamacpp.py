@@ -21,7 +21,7 @@ from .engines import llamacpp_release as release
 from .gguf import GGUFError, read_metadata
 from .util import human_bytes
 
-REQUIRED_BINS = ("llama-server", "llama-quantize", "llama-gguf-split")
+REQUIRED_BINS = ("llama-server", "llama-quantize", "llama-gguf-split", "llama-imatrix")
 
 
 def event(progress: float | None = None, message: str | None = None, **extra: Any) -> None:

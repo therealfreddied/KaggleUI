@@ -313,6 +313,8 @@ export const api = {
     request<Job>("/_kui/api/workbench/ml/forge", { method: "POST", body: json(body) }),
   cancelForge: (id: string) =>
     request<Job>(`/_kui/api/workbench/ml/forge/${id}/cancel`, { method: "POST" }),
+  resumeForge: (id: string) =>
+    request<Job>(`/_kui/api/workbench/ml/forge/${encodeURIComponent(id)}/resume`, { method: "POST" }),
   harnessProfiles: () => request<{ profiles: HarnessProfileInfo[] }>("/_kui/api/workbench/ml/harness"),
   runHarness: (deployment: string, profile: string) =>
     request<EvalReport>("/_kui/api/workbench/ml/harness", { method: "POST", body: json({ deployment, profile }) }),

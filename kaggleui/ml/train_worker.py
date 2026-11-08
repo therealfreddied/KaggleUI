@@ -56,6 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         if install.returncode != 0:
             emit({"error": "torch is unavailable in the training environment; pick a GPU runtime"})
             return 3
+    version = subprocess.run([python, "-c", "import trl; print(trl.__version__)"], capture_output=True,
+                             text=True)
+    if version.returncode == 0 and version.stdout.strip():
+        # The forge manifest records what actually trained the adapter, not what we hoped for.
+        emit({"engine_version": version.stdout.strip()})
     env = dict(os.environ)
     root = str(Path(__file__).resolve().parent.parent.parent)
     env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")

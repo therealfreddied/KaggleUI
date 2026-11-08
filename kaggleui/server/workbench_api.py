@@ -678,6 +678,17 @@ async def cancel_forge(request: Request, job_id: str):
     except DeployError as exc:
         raise HTTPException(404, str(exc)) from exc
 
+@router.post("/workbench/ml/forge/{job_id}/resume")
+async def resume_forge(request: Request, job_id: str):
+    from ..engines.context import DeployError
+    from ..ml.pipeline import resume
+
+    st = _admin(request)
+    try:
+        return await resume(st, job_id)
+    except DeployError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
 @router.get("/benchmarks")
 def list_benchmarks(request: Request):
     from ..workbench import bench

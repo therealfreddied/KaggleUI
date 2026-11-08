@@ -86,6 +86,8 @@ async def console_ws(ws: WebSocket, state: AppState) -> None:
                 return
             await ws.send_bytes(data)
 
+    loop = asyncio.get_running_loop()
+
     async def read_client() -> None:
         while True:
             msg = await ws.receive_json()
@@ -93,7 +95,8 @@ async def console_ws(ws: WebSocket, state: AppState) -> None:
             if op == "input":
                 text = msg.get("data") or ""
                 if text:
-                    os.write(master, text.encode())
+                    # A shell that stops reading would otherwise block the whole server on a big paste.
+                    await loop.run_in_executor(None, os.write, master, text.encode())
             elif op == "resize":
                 cols, rows = int(msg.get("cols") or 80), int(msg.get("rows") or 24)
                 import fcntl

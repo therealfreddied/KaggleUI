@@ -60,7 +60,8 @@ async def remote_collect(state: AppState, repo: str, prompts: list[str], *, max_
                                                                                 "temperature": temperature,
                                                                                 "return_full_text": False}})
             if response.status_code != 200:
-                raise DeployError(f"HF Inference returned {response.status_code}: {response.text[:200]}")
+                raise DeployError(f"HF Inference at {HF_INFERENCE + repo} returned {response.status_code}: "
+                                  f"{response.text[:200]}")
             data = response.json()
             text = data[0].get("generated_text") if isinstance(data, list) and data else None
             if not text:

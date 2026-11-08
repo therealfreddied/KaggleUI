@@ -1,0 +1,26 @@
+Third-party components invoked by KaggleUI, and their licenses.
+
+Both are driven strictly as subprocesses, in isolated environments. KaggleUI never imports,
+vendors, links against, or distributes their source; they remain separate works and are
+installed only when the user enables the feature that needs them.
+
+Heretic — https://github.com/p-e-w/heretic
+  License: AGPL-3.0
+  Used by: the abliteration / behavior-edit stage (kaggleui/catalog/abliterate_worker.py,
+  kaggleui/ml/edit.py), launched as a child process with an isolated `uv` environment.
+
+mergekit — https://github.com/arcee-ai/mergekit
+  License: LGPL-3.0
+  Used by: model merge/convert jobs (kaggleui/ml/conversion.py) in the isolated training venv,
+  invoked through its command line, never imported.
+
+llama.cpp — https://github.com/ggml-org/llama.cpp
+  License: MIT
+  Used by: llama-server, llama-quantize, llama-imatrix, llama-gguf-split binaries downloaded
+  from the pinned release (kaggleui/engines/llamacpp_release.py), plus llama-swap
+  (https://github.com/mostlygeek/llama-swap, MIT).
+
+trl, peft, transformers, accelerate, datasets, bitsandbytes
+  Licenses: Apache-2.0 (trl, peft, transformers, datasets), Apache-2.0 (accelerate),
+  MIT (bitsandbytes)
+  Used by: LoRA/QLoRA training inside the isolated training venv.

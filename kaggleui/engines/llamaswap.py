@@ -62,8 +62,11 @@ def _env_for(placed: place.ResolvedPlacement) -> list[str]:
 
 
 def _write_config(inst: SwapInstance) -> None:
+    # llama-swap hot-reloads on change, so a mid-write read must never see a truncated file.
     inst.config_path.parent.mkdir(parents=True, exist_ok=True)
-    inst.config_path.write_text(swap_yaml(inst.models))
+    tmp = inst.config_path.with_suffix(".tmp")
+    tmp.write_text(swap_yaml(inst.models))
+    tmp.replace(inst.config_path)
 
 def _local_ggufs(paths: Paths) -> dict[str, Path]:
     """Every GGUF this home can load without a download: imports first, then pulled Ollama blobs."""
@@ -142,7 +145,11 @@ async def _ensure_running(inst: SwapInstance, ctx: EngineContext) -> None:
                                                          "-listen", f"127.0.0.1:{inst.port}"],
                                env=ctx.env(), log_path=ctx.log_path("llama-swap"), on_line=ctx.log)
     await inst.proc.start()
-    if not await wait_for(lambda: _models_online(inst.port) is not None, timeout=HEALTH_TIMEOUT, interval=0.5):
+
+    async def _up() -> bool:
+        return await _models_online(inst.port) is not None
+
+    if not await wait_for(_up, timeout=HEALTH_TIMEOUT, interval=0.5):
         raise DeployError("llama-swap did not answer /v1/models in time")
 
 
@@ -166,22 +173,27 @@ async def deploy(spec: DeploymentSpec, ctx: EngineContext) -> tuple[OpenAIUpstre
     inst.models[ctx.served_name] = swap_model_entry(served_name=ctx.served_name, cmd=argv, ttl=ttl,
                                                     env=_env_for(placed))
     _merge_available(inst, ctx.paths, skip=ctx.served_name)
+    ctx.progress("loading", None, "Registering with llama-swap")
+    try:
+        await _ensure_running(inst, ctx)
+
+        async def _listed() -> bool:
+            return await _names_include(inst.port, ctx.served_name)
+
+        if not await wait_for(_listed, timeout=30.0, interval=0.5):
+            raise DeployError("llama-swap did not list the new model")
+    except DeployError:
+        # A failed deploy must not leave the model in the generated config, or a restart would
+        # resurrect a phantom entry from the durable record's siblings.
+        inst.models.pop(ctx.served_name, None)
+        _write_config(inst)
+        raise
     if ctx.workbench is not None:
         record = ctx.workbench.deployment_record(ctx.dep_id)
         ctx.workbench.put_deployment(ctx.dep_id, spec, ctx.served_name,
                                      created_at=record.created_at if record else 0.0,
                                      runtime={"gguf": str(gguf), "argv": argv, "served_name": ctx.served_name,
                                               "gpus": list(ctx.gpus)})
-    ctx.progress("loading", None, "Registering with llama-swap")
-    try:
-        await _ensure_running(inst, ctx)
-    except DeployError:
-        inst.models.pop(ctx.served_name, None)
-        _write_config(inst)
-        raise
-    names = await wait_for(lambda: _names_include(inst.port, ctx.served_name), timeout=30.0, interval=0.5)
-    if not names:
-        raise DeployError("llama-swap did not list the new model")
     info = {"runtime": "llama-swap", "swap_port": inst.port, "gguf": str(gguf), "ttl": ttl,
             "placement": placed.public(), "loads_on_demand": True}
     return OpenAIUpstream(inst.base_url, ctx.served_name), info

@@ -218,8 +218,8 @@ function DeploymentCard({ d, focus }: { d: Deployment; focus: boolean }) {
             <CopyButton text={d.name} label="Copy API model name" className="!px-1.5 [&>span]:sr-only" />
           </div>
           <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-[12.5px] text-fg-3">
-            <span className="font-mono">{d.spec.model.id}</span>
-            {d.spec.model.variant && <span className="font-mono">· {d.spec.model.variant}</span>}
+            <span className="font-mono break-all">{d.spec.model.id}</span>
+            {d.spec.model.variant && <span className="font-mono break-all">· {d.spec.model.variant}</span>}
             <span>· {MODALITY_LABEL[d.modality]} on {ENGINE_LABEL[d.spec.model.engine] ?? d.spec.model.engine}</span>
           </div>
         </div>

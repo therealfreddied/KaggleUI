@@ -54,6 +54,9 @@ class JobRunner:
         for key in ("message", "checkpoint", "error"):
             if event.get(key):
                 fields[key] = str(event[key])
+        if event.get("engine_version"):
+            # Manifests need the version of the engine that actually ran, which only the child knows.
+            fields["spec"] = {**self.job.spec, "engine_version": str(event["engine_version"])}
         if event.get("artifact"):
             self._artifacts.append(str(event["artifact"]))
             fields["artifacts"] = list(self._artifacts)

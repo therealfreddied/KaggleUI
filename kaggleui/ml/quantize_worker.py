@@ -40,6 +40,12 @@ def main(argv: list[str] | None = None) -> int:
             emit({"error": "the pinned llama.cpp release ships no llama-quantize binary"})
             return 2
         spec["quantize_bin"] = str(found)
+        if spec.get("calibration"):
+            matrix_bin = find_file(bin_dir, "llama-imatrix")
+            if matrix_bin is None:
+                emit({"error": "the pinned llama.cpp release ships no llama-imatrix binary"})
+                return 2
+            spec["imatrix_bin"] = str(matrix_bin)
         Path(args.spec).write_text(json.dumps(spec, indent=2))
     env = dict(os.environ)
     root = str(Path(__file__).resolve().parent.parent.parent)

@@ -357,6 +357,15 @@ function Pipeline() {
     }
   }
 
+  async function resume(id: string) {
+    try {
+      await api.resumeForge(id);
+      await cache.invalidateQueries({ queryKey: ["jobs", "forge"] });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : String(error), "error");
+    }
+  }
+
   async function cancel(id: string) {
     try {
       await api.cancelForge(id);
@@ -414,8 +423,11 @@ function Pipeline() {
             <span className="font-mono text-[12.5px]">{job.id}</span>
             <Chip tone={job.state === "failed" ? "warn" : job.state === "succeeded" ? "plain" : "signal"}>{job.state}</Chip>
             <span className="min-w-0 flex-1 truncate text-muted">{job.error ?? job.message}</span>
-            {!["succeeded", "failed", "cancelled"].includes(job.state) && (
+            {!["succeeded", "failed", "cancelled", "interrupted"].includes(job.state) && (
               <Button size="sm" variant="ghost" onClick={() => cancel(job.id)}>Cancel</Button>
+            )}
+            {job.resume_supported && ["failed", "cancelled", "interrupted"].includes(job.state) && (
+              <Button size="sm" variant="ghost" onClick={() => resume(job.id)}>Resume</Button>
             )}
           </div>
         ))}

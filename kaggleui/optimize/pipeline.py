@@ -93,18 +93,30 @@ class Optimizer:
                         removed += cut
                 if removed:
                     self._note(dep, f"harness: removed {removed} chars of static instructions")
-        if not profile.enabled:
+        if not profile.enabled and not any(
+                options.get(k) is not None for k in ("terse", "max_prompt_tokens", "context_strategy")):
             return out
-        if profile.max_prompt_tokens:
+        # Per-model options win over the global profile; unset means "inherit the profile".
+        terse = options.get("terse")
+        terse_on = profile.terse_replies if terse is None else bool(terse)
+        try:
+            max_tokens = int(options["max_prompt_tokens"]) if options.get("max_prompt_tokens") \
+                else profile.max_prompt_tokens
+        except (TypeError, ValueError):
+            max_tokens = profile.max_prompt_tokens
+        strategy = options.get("context_strategy")
+        if strategy not in ("head", "tail", "middle", "balanced"):
+            strategy = profile.context_strategy
+        if max_tokens:
             ctx = self._ctx(dep)
-            budget = profile.max_prompt_tokens
+            budget = max_tokens
             if ctx:
                 budget = min(budget, max(ctx - 256, 256))
-            out, note = apply_context(out, max_prompt_tokens=budget, strategy=profile.context_strategy)
+            out, note = apply_context(out, max_prompt_tokens=budget, strategy=strategy)
             self._note(dep, note)
         out, note = apply_headroom(out, ctx=self._ctx(dep), margin=profile.output_headroom_margin)
         self._note(dep, note)
-        if profile.terse_replies:
+        if terse_on:
             out, note = apply_terse(out)
             self._note(dep, note)
         return out
@@ -186,6 +198,9 @@ class Optimizer:
     def cache_mode(self, dep: Deployment) -> str:
         """``off`` | ``exact`` | ``semantic``; a model's own option wins over the global profile."""
         value = (dep.spec.options or {}).get("cache")
+        if value is False:
+            # Opt-out only: a per-model flag never enables caching the global profile leaves off.
+            return "off"
         if value in ("off", "exact", "semantic"):
             return str(value)
         if self.cache_profile.semantic:

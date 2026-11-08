@@ -185,7 +185,9 @@ export interface InstanceInfo {
 }
 
 export interface WorkspaceDiff {
-  meta: { local: string; incoming: string };
+  same: boolean;
+  workspace_id: { local: string; incoming: string };
+  name: { local: string; incoming: string };
   settings: string[];
   deployments: { added: string[]; removed: string[]; changed: string[] };
   deployment_sets: { added: string[]; removed: string[]; changed: string[] };

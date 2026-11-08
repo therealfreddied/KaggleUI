@@ -241,10 +241,12 @@ function PreviewCard({ preview }: { preview: WorkspacePreview | null }) {
   return (
     <div className="space-y-3 rounded-lg border border-line bg-panel p-3.5">
       <div className="flex flex-wrap items-center gap-2 text-[13px]">
-        <Chip tone="info">{diff.meta.incoming}</Chip>
-        <span className="text-fg-3">incoming</span>
-        <span className="text-fg-3">·</span>
-        <span className="text-fg-3">local {diff.meta.local}</span>
+        <Chip tone="info">{diff.name.incoming}</Chip>
+        <span className="text-fg-3">incoming snapshot</span>
+        {diff.name.local !== diff.name.incoming && <>
+          <span className="text-fg-3">·</span>
+          <span className="text-fg-3">local is {diff.name.local}</span>
+        </>}
         {diff.auto_start_set && <Chip tone="warn">will start active set</Chip>}
       </div>
       <div className="space-y-1.5 text-[13px]">

@@ -11,6 +11,7 @@ import tempfile
 import httpx
 
 from ..capabilities import profile
+from ..config import Paths
 from ..proc import ManagedProcess, run_cmd
 from ..schemas import DeploymentSpec
 from ..util import which
@@ -104,6 +105,39 @@ def model_ref(spec: DeploymentSpec) -> str | None:
     if ":" in m.id:
         return m.id
     return f"{m.id}:{m.variant or 'latest'}"
+
+
+def gguf_blob(paths: Paths, ref: str) -> Path | None:
+    """The pulled GGUF file for an Ollama ref, read straight from the model store.
+
+    Every layer lands under ``<models>/blobs/sha256-<digest>``; the manifest at
+    ``manifests/registry.ollama.ai/<name>/<tag>`` says which one is the model — and that layer is
+    a raw GGUF file, which llama-server can load directly. One pull feeds both engines.
+    """
+    name, _, tag = ref.rpartition(":")
+    if not name:
+        name, tag = ref, "latest"
+    if "/" not in name:
+        name = f"library/{name}"
+    manifest = paths.ollama_models / "manifests" / "registry.ollama.ai" / name / tag
+    if not manifest.exists():
+        return None
+    try:
+        layers = json.loads(manifest.read_text()).get("layers") or []
+    except (OSError, ValueError):
+        return None
+    blobs = paths.ollama_models / "blobs"
+    for layer in layers:
+        if ".image.model" not in str(layer.get("mediaType", "")):
+            continue
+        digest = str(layer.get("digest", "")).removeprefix("sha256:")
+        blob = blobs / f"sha256-{digest}"
+        if blob.exists():
+            with blob.open("rb") as fh:
+                if fh.read(4) == b"GGUF":
+                    return blob
+            return None
+    return None
 
 
 async def _pull(base: str, ref: str, ctx: EngineContext) -> None:

@@ -94,7 +94,8 @@ def _artifact_gguf(artifact_id: str, version: str | None, paths: Paths) -> Path:
     return ggups[0]
 
 async def _download_gguf(ctx: EngineContext, spec: DeploymentSpec) -> Path:
-    quant = spec.options.get("quant")
+    # HF GGUF variants are quant labels; the one the user picked must be the one we download.
+    quant = spec.options.get("quant") or spec.model.variant
     revision = spec.options.get("revision")
     ctx.progress("downloading", 0.0, f"Listing files in {spec.model.id}")
     try:
@@ -122,9 +123,27 @@ async def _download_gguf(ctx: EngineContext, spec: DeploymentSpec) -> Path:
     return target
 
 
+async def _ollama_gguf(ctx: EngineContext, spec: DeploymentSpec) -> Path:
+    """Serve an Ollama ref with llama-server: pull through the shared server, load its blob."""
+    from . import ollama
+
+    ref = ollama.model_ref(spec)
+    if ref is None:
+        raise DeployError(f"{spec.model.id} has no Ollama reference to resolve")
+    base = await ollama.OllamaServer.get().ensure(ctx)
+    await ollama._pull(base, ref, ctx)
+    blob = ollama.gguf_blob(ctx.paths, ref)
+    if blob is None:
+        raise DeployError(f"{ref} pulled but its GGUF blob is missing from {ctx.paths.ollama_models}")
+    ctx.log(f"llama.cpp shares Ollama's copy of {ref}: {blob.name}")
+    return blob
+
+
 async def model_path(ctx: EngineContext, spec: DeploymentSpec) -> Path:
     if spec.model.source in LOCAL_SOURCES:
         return local_gguf(spec, ctx.paths)
+    if spec.model.source == "ollama":
+        return await _ollama_gguf(ctx, spec)
     return await _download_gguf(ctx, spec)
 
 

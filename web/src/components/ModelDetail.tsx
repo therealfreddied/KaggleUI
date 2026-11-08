@@ -229,8 +229,11 @@ export function ModelDetail({
   }, [detail.data]);
 
   const engines = useMemo(() => {
-    if (item.modality === "text" && item.source === "hf" && item.engine !== "ollama")
-      return pool?.tpu ? ["vllm", "transformers"] : ["vllm", "sglang", "transformers"];
+    if (item.modality === "text") {
+      // Every GGUF model runs on either runner; both are real choices with different strengths.
+      if (item.engine === "ollama") return ["ollama", "llamacpp"];
+      if (item.source === "hf") return pool?.tpu ? ["vllm", "transformers"] : ["vllm", "sglang", "transformers"];
+    }
     return item.engine ? [item.engine] : [];
   }, [item, pool?.tpu]);
 
@@ -376,7 +379,9 @@ export function ModelDetail({
         )}
 
         {engines.length > 1 && (
-          <Field label="Engine" hint="vLLM and SGLang are the fast runners (experimental on T4s); Transformers is the safe fallback.">
+          <Field label="Engine" hint={item.engine === "ollama"
+            ? "Ollama shares one server across models; llama.cpp runs a dedicated llama-server for this model and exposes explicit GPU placement."
+            : "vLLM and SGLang are the fast runners (experimental on T4s); Transformers is the safe fallback."}>
             <Select value={engine ?? ""} onChange={(e) => setEngine(e.target.value)}>
               {engines.map((e) => (
                 <option key={e} value={e}>

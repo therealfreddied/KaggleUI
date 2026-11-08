@@ -50,7 +50,8 @@ class KaggleNotebooks:
 
     def deploy(self, *, slug: str, source: str, title: str | None = None,
                accelerator: str | None = None, timeout_s: int | None = None, run: bool = True,
-               dataset_sources: list[str] | None = None, internet: bool = True) -> dict:
+               dataset_sources: list[str] | None = None, internet: bool = True,
+               extra_metadata: dict | None = None) -> dict:
         if not slug or "/" not in slug:
             raise KaggleError("notebook slug must look like owner/kernel-name")
         src = Path(source).expanduser()
@@ -68,6 +69,11 @@ class KaggleNotebooks:
                 "enable_internet": bool(internet),
                 "dataset_sources": dataset_sources or [], "competition_sources": [], "kernel_sources": [],
             }
+            # A pushed notebook keeps what the existing version had (BYOD image, machine shape);
+            # only the identity and the code file are ours to set.
+            for key, value in (extra_metadata or {}).items():
+                if key not in {"id", "code_file"}:
+                    metadata[key] = value
             (folder / "kernel-metadata.json").write_text(json.dumps(metadata, indent=1))
             args = ["kernels", "push", "-p", str(folder)]
             if accelerator and accelerator.lower() != "none":

@@ -114,6 +114,19 @@ def test_kaggle_deploy_uses_verified_flags(tmp_path):
     assert metadata["enable_gpu"] is True and metadata["enable_tpu"] is False
 
 
+def test_kaggle_deploy_inherits_existing_metadata(tmp_path):
+    source = tmp_path / "notebook.ipynb"
+    source.write_text("{}")
+    adapter = KaggleNotebooks(binary=str(fake_kaggle(tmp_path)),
+                              credential={"username": "alice", "key": "k"})
+    adapter.deploy(slug="owner/kernel", source=str(source), accelerator="gpu",
+                   extra_metadata={"docker_image": "gcr.io/private/byod@sha256:abc",
+                                   "machine_shape": "NvidiaTeslaT4", "id": "someone/else"})
+    metadata = json.loads((tmp_path / "metadata.json").read_text())
+    assert metadata["docker_image"] == "gcr.io/private/byod@sha256:abc"
+    assert metadata["machine_shape"] == "NvidiaTeslaT4"
+    assert metadata["id"] == "owner/kernel"
+
 def test_kaggle_stop_reports_unavailable(tmp_path):
     adapter = KaggleNotebooks(binary=str(fake_kaggle(tmp_path, body="KernelWorkerStatus.RUNNING")))
     result = adapter.stop("owner/kernel")

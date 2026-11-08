@@ -355,10 +355,17 @@ def cmd_notebook(args, store: ProfileStore) -> int:
         source = args.source or notebook.get("source") or ""
         if not source:
             raise ProfileError("no notebook source path")
+        inherited = None
+        if args.metadata:
+            try:
+                payload = json.loads(Path(args.metadata).expanduser().read_text())
+            except (OSError, ValueError) as exc:
+                raise ProfileError(f"cannot read {args.metadata}: {exc}") from exc
+            inherited = payload if isinstance(payload, dict) else None
         result = adapter.deploy(slug=slug, source=source, accelerator=args.accelerator or notebook.get("accelerator"),
                                 timeout_s=args.timeout or notebook.get("timeout_s"),
                                 run=not args.no_run, dataset_sources=args.dataset or [],
-                                internet=not args.no_internet)
+                                internet=not args.no_internet, extra_metadata=inherited)
         _print(args, result)
         return 0
     if args.action == "status":
@@ -542,6 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
     ndeploy.add_argument("--dataset", action="append")
     ndeploy.add_argument("--no-run", action="store_true")
     ndeploy.add_argument("--no-internet", action="store_true")
+    ndeploy.add_argument("--metadata", help="kernel-metadata.json to inherit (BYOD image, machine shape)")
     nstatus = nsub.add_parser("status")
     nstatus.add_argument("slug", nargs="?")
     nopen = nsub.add_parser("open")

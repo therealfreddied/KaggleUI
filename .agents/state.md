@@ -19,7 +19,8 @@ matters — the personal fork `therealfreddied/KaggleUI` (`self`). Upstream `Ult
 - `0c6ccf0` — `0.4.2` in `kaggleui/__init__.py`, `pyproject.toml`, `web/package.json`; SPA bundle
   rebuilt; `dist/kaggleui-0.4.2-py3-none-any.whl` built (51 static assets, bundle stamped `0.4.2`);
   tag `v0.4.2`.
-- Published to the fork: `main` through `6b9f581` (bank updates included) and tag `v0.4.2`.
+- Published to the fork: `main` through `4cfcdbf` (release + bank commits) and tag `v0.4.2`
+  (annotated, points at `0c6ccf0`).
   `git config branch.main.pushRemote self`, so plain `git push --follow-tags` targets the fork;
   `--dry-run` → `Everything up-to-date`.
 - Verification: `ruff check kaggleui tests` → `All checks passed!`; affected modules →

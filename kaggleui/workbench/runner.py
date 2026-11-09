@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..proc import ManagedProcess
-from .jobs import JobRecord, JobStore, read_log
+from .jobs import JobRecord, JobStore, tail_log
 
 EVENT_TAG = "KUI_EVENT "
 EventParser = Callable[[dict[str, Any]], None]
@@ -89,8 +89,7 @@ class JobRunner:
             return self.store.update(self.job.id, state="succeeded", ended_at=time.time(),
                                      progress=record.progress if record.progress is not None else 1.0,
                                      message=record.message or "Finished")
-        lines = read_log(self.log_path)
-        detail = error or "\n".join(lines[-5:]) or f"exit code {rc}"
+        detail = error or "\n".join(tail_log(self.log_path, 5)) or f"exit code {rc}"
         return self.store.update(self.job.id, state="failed", ended_at=time.time(),
                                  error=record.error or detail, message="Failed")
 
@@ -157,6 +156,11 @@ async def start_local(store: JobStore, job: JobRecord, work) -> asyncio.Task:
 
     task = asyncio.create_task(_run())
     store.attach_local(job.id, task)
+    record = store.get(job.id)
+    if record is not None and record.cancel_requested and not task.done():
+        # A cancel that landed between the state=running update and attach_local never found a
+        # task to interrupt; deliver it now.
+        task.cancel()
     _background.add(task)
 
     def _done(t: asyncio.Task) -> None:

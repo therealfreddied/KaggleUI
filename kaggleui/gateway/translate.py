@@ -48,7 +48,11 @@ def effort_from_anthropic(thinking: dict | None, output_config: dict | None = No
         return output_config["effort"]
     if not isinstance(thinking, dict):
         return None
-    budget = int(thinking.get("budget_tokens") or 0)
+    try:
+        budget = int(thinking.get("budget_tokens") or 0)
+    except (TypeError, ValueError):
+        # A malformed budget must not 500 the request; treat it as absent.
+        return None
     if not budget:
         return None
     return "low" if budget < 2048 else "medium" if budget < 8192 else "high"

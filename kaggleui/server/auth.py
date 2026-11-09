@@ -142,7 +142,14 @@ class Auth:
         return len(q) >= MAX_FAILURES
 
     def record_failure(self, ip: str) -> None:
-        self._failures.setdefault(ip, deque()).append(time.time())
+        # Prune here too: is_rate_limited only runs on the check path, so an IP that keeps
+        # failing would otherwise grow its deque without bound.
+        now = time.time()
+        q = self._failures.setdefault(ip, deque())
+        cutoff = now - FAILURE_WINDOW
+        while q and q[0] < cutoff:
+            q.popleft()
+        q.append(now)
 
     # -- rotation -----------------------------------------------------------------------------
     def regenerate(self, which: str) -> None:

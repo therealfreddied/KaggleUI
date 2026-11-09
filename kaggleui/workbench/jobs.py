@@ -11,6 +11,7 @@ import json
 import sqlite3
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -208,14 +209,42 @@ class JobStore:
 
 
 def read_log(path: str | Path | None, offset: int = 0, limit: int = 400) -> list[str]:
-    """Return log lines starting at ``offset`` (line index), at most ``limit`` of them."""
+    """Return log lines starting at ``offset`` (line index), at most ``limit`` of them.
+
+    Streams the file and stops after the requested window; never loads the whole log into memory.
+    """
     if not path:
         return []
     p = Path(path)
     if not p.exists():
         return []
+    start = max(0, offset)
+    stop = start + max(1, limit)
+    out: list[str] = []
     try:
-        lines = p.read_text(errors="replace").splitlines()
+        with p.open("r", errors="replace") as handle:
+            for index, line in enumerate(handle):
+                if index >= stop:
+                    break
+                if index >= start:
+                    out.append(line.rstrip("\r\n"))
     except OSError:
         return []
-    return lines[max(0, offset): max(0, offset) + max(1, limit)]
+    return out
+
+
+def tail_log(path: str | Path | None, count: int = 5) -> list[str]:
+    """The last ``count`` lines of a log, read with constant memory."""
+    if not path:
+        return []
+    p = Path(path)
+    if not p.exists():
+        return []
+    tail: deque[str] = deque(maxlen=max(1, count))
+    try:
+        with p.open("r", errors="replace") as handle:
+            for line in handle:
+                tail.append(line.rstrip("\n"))
+    except OSError:
+        return []
+    return list(tail)

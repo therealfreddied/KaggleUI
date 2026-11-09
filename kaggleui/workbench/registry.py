@@ -60,9 +60,30 @@ class ArtifactRegistry:
     def _entries(self) -> list[dict]:
         try:
             data = json.loads(self.index.read_text())
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return []
+        except (OSError, ValueError):
+            # Corrupt index: treat it as broken, not empty — returning [] here would make the next
+            # add() rewrite the index with only the new entry and orphan every existing artifact.
+            return self._rebuild_entries()
         return data.get("artifacts", []) if isinstance(data, dict) else []
+
+    def _rebuild_entries(self) -> list[dict]:
+        """Reconstruct the index from on-disk manifests after the index file was corrupted."""
+        if not self.root.is_dir():
+            return []
+        entries: list[dict] = []
+        for manifest_path in sorted(self.root.glob("*/*/manifest.json")):
+            if any(part.startswith(".") for part in manifest_path.relative_to(self.root).parts):
+                continue  # staging leftovers from an interrupted add()
+            try:
+                manifest = ArtifactManifest.model_validate_json(manifest_path.read_text())
+            except (OSError, ValueError):
+                continue
+            entries.append({"artifact_id": manifest.artifact_id, "version": manifest.version,
+                            "kind": manifest.kind, "created_at": manifest.created_at,
+                            "dir": str(manifest_path.parent)})
+        return entries
 
     def _write_index(self, entries: list[dict]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)

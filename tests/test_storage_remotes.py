@@ -100,3 +100,42 @@ def test_hf_provider_needs_the_hub_package(monkeypatch):
     with pytest.raises(StorageError, match="huggingface_hub"):
         remotes.HFProvider("me/repo")
 
+
+def test_github_download_saves_file_content_not_api_envelope(tmp_path):
+    import asyncio
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    payload = b'{"artifact": "bytes"}'
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if "raw" in self.headers.get("Accept", ""):
+                body = payload
+                content_type = "application/octet-stream"
+            else:
+                # What GET /repos/{o}/{r}/contents/{path} returns under the default JSON accept header.
+                body = json.dumps({"type": "file", "name": "m.json", "path": "kaggleui/m.json",
+                                   "size": len(payload), "encoding": "base64",
+                                   "content": base64.b64encode(payload).decode()}).encode()
+                content_type = "application/json; charset=utf-8"
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        provider = GitHubProvider("me/catalog", path="kaggleui",
+                                  endpoint=f"http://127.0.0.1:{server.server_address[1]}", cache=tmp_path)
+        dest = tmp_path / "downloaded.json"
+        asyncio.run(provider.download("m.json", dest))
+        assert dest.read_bytes() == payload
+    finally:
+        server.shutdown()
+

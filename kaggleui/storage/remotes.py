@@ -58,9 +58,11 @@ def _json(body: bytes, what: str):
     except ValueError as exc:
         raise StorageError(f"{what} returned non-JSON: {body[:120]!r}") from exc
 
-def _stream(url: str, dest: Path, token: str | None, *, progress=None) -> None:
+def _stream(url: str, dest: Path, token: str | None, *, progress=None, accept: str | None = None) -> None:
     request = urllib.request.Request(url)
     request.add_header("User-Agent", "kaggleui")
+    if accept:
+        request.add_header("Accept", accept)
     if token:
         request.add_header("Authorization", f"Bearer {token}")
     try:
@@ -116,6 +118,23 @@ class HFProvider:
         self.endpoint = endpoint.rstrip("/")
         self.cache = Path(cache or "/tmp")
 
+    @staticmethod
+    def _handle_line(raw: bytes, progress, result: dict | None) -> dict | None:
+        line = raw.decode(errors="replace").rstrip()
+        if line.startswith(EVENT_TAG):
+            try:
+                payload = json.loads(line[len(EVENT_TAG):].strip())
+            except ValueError:
+                return result
+            if progress and isinstance(payload.get("fraction"), (int, float)):
+                progress(float(payload["fraction"]))
+        elif line:
+            try:
+                return json.loads(line)
+            except ValueError:
+                return result
+        return result
+
     async def _run(self, spec: dict, *, progress=None) -> dict:
         scratch = transfer_scratch(self.cache, "hf")
         spec_path = scratch / "spec.json"
@@ -131,20 +150,19 @@ class HFProvider:
             result: dict | None = None
             stderr = b""
             assert proc.stdout is not None
-            async for raw in proc.stdout:
-                line = raw.decode(errors="replace").rstrip()
-                if line.startswith(EVENT_TAG):
-                    try:
-                        payload = json.loads(line[len(EVENT_TAG):].strip())
-                    except ValueError:
-                        continue
-                    if progress and isinstance(payload.get("fraction"), (int, float)):
-                        progress(float(payload["fraction"]))
-                elif line:
-                    try:
-                        result = json.loads(line)
-                    except ValueError:
-                        continue
+            # Chunked reads: the result line can exceed the 64 KiB stream limit (a repo with many
+            # files lists as one big JSON line), and line iteration would raise LimitOverrunError.
+            pending = b""
+            while True:
+                chunk = await proc.stdout.read(1 << 16)
+                if not chunk:
+                    break
+                pending += chunk
+                *ready, pending = pending.split(b"\n")
+                for raw in ready:
+                    result = self._handle_line(raw, progress, result) or result
+            if pending:
+                result = self._handle_line(pending, progress, result) or result
             if proc.stderr is not None:
                 stderr = await proc.stderr.read()
             code = await proc.wait()
@@ -281,7 +299,9 @@ class GitHubProvider:
         dest = Path(local)
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmp = dest.with_name(dest.name + ".part")
-        await asyncio.to_thread(_stream, self._url(remote), tmp, self.token, progress=progress)
+        # The default JSON accept returns a base64 metadata envelope, not the file bytes.
+        await asyncio.to_thread(_stream, self._url(remote), tmp, self.token, progress=progress,
+                                accept="application/vnd.github.raw+json")
         tmp.replace(dest)
 
     async def stat(self, remote: str) -> RemoteEntry | None:

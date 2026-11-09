@@ -225,8 +225,10 @@ async def restore(state: AppState, ctx, *, connection_name: str, artifact_id: st
         _save_records(state, records)
         return {"status": "restored", "artifact_id": saved.artifact_id, "version": saved.version,
                 "connection": connection_name, "target": root}
-    except (BackupError, RegistryError, OSError):
-        records[key] = {**records.get(key, {}), "status": "missing_dependency",
+    except (BackupError, RegistryError, OSError, StorageError) as exc:
+        # "failed", not "missing_dependency": hash mismatches and network errors are not a
+        # missing remote object, and every failure must move the record out of restore_pending.
+        records[key] = {**records.get(key, {}), "status": "failed", "error": str(exc),
                         "connection": connection_name, "target": root, "at": time.time()}
         _save_records(state, records)
         raise
@@ -244,7 +246,8 @@ def status(state: AppState, connection_name: str | None = None) -> list[dict[str
         rows.append({"artifact_id": manifest.artifact_id, "version": manifest.version, "kind": manifest.kind,
                      "size": sum(f.size for f in manifest.files),
                      "status": record.get("status") if record.get("status") in {
-                         "backed_up", "restore_pending", "missing_dependency", "unverified"} else "local_only",
+                         "backed_up", "restore_pending", "missing_dependency", "failed",
+                         "unverified"} else "local_only",
                      "connection": record.get("connection"), "target": record.get("target"),
                      "at": record.get("at"), "error": record.get("error")})
     for key, record in records.items():

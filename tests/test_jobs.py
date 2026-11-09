@@ -78,3 +78,12 @@ async def test_cancel_stops_in_process_jobs(tmp_path):
     await asyncio.gather(task, return_exceptions=True)
     assert store.get(job.id).state == "cancelled"
     store.close()
+
+
+def test_tail_log_reads_last_lines_only(tmp_path):
+    from kaggleui.workbench.jobs import tail_log
+
+    log = tmp_path / "big.log"
+    log.write_text("\n".join(f"line {i}" for i in range(10000)) + "\n")
+    assert tail_log(log, 3) == ["line 9997", "line 9998", "line 9999"]
+    assert tail_log(None) == []

@@ -119,3 +119,10 @@ def test_template_engines_get_enable_thinking_switch():
     assert "chat_template_kwargs" not in vllm._body({"reasoning_effort": "high"})
     ollama = OpenAIUpstream("http://x", "m")
     assert "chat_template_kwargs" not in ollama._body({"reasoning_effort": "none"})
+
+
+def test_anthropic_bad_budget_tokens_is_ignored_not_a_500():
+    body = {"messages": [{"role": "user", "content": "hi"}],
+            "thinking": {"type": "enabled", "budget_tokens": "lots"}}
+    out = anthropic_to_openai(body)
+    assert "reasoning_effort" not in out

@@ -133,3 +133,17 @@ def test_concurrent_adds_keep_every_index_entry(tmp_path):
     reg._entries = real_entries
     assert not errors
     assert {m.artifact_id for m in reg.list()} == {f"art-{i}" for i in range(4)}
+
+
+def test_corrupt_index_does_not_drop_existing_entries(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    one, _two = _files(src)
+    reg = ArtifactRegistry(tmp_path / "artifacts")
+    reg.add(_manifest(artifact_id="first", version="v1"), [one])
+
+    (tmp_path / "artifacts" / "index.json").write_text("{not json")
+    reg.add(_manifest(artifact_id="second", version="v1"), [one])
+
+    assert reg.get("first", "v1") is not None
+    assert reg.get("second", "v1") is not None

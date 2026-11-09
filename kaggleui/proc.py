@@ -48,26 +48,37 @@ class ManagedProcess:
     async def _pump(self) -> None:
         assert self.proc and self.proc.stdout
         logf = open(self.log_path, "a", buffering=1) if self.log_path else None
+        # Chunked reads, never readline(): a single line over the 64 KiB stream limit makes
+        # readline() raise LimitOverrunError, which would kill this pump and block the child.
+        pending = b""
         try:
             while True:
-                raw = await self.proc.stdout.readline()
-                if not raw:
+                chunk = await self.proc.stdout.read(1 << 16)
+                if not chunk:
                     break
-                line = raw.decode(errors="replace").rstrip("\r\n")
-                # tqdm-style progress bars use \r; keep only the latest segment.
-                if "\r" in line:
-                    line = line.split("\r")[-1]
-                self.tail.append(line)
-                if logf:
-                    logf.write(line + "\n")
-                if self.on_line:
-                    try:
-                        self.on_line(line)
-                    except Exception:
-                        pass
+                pending += chunk
+                *ready, pending = pending.split(b"\n")
+                for raw in ready:
+                    self._emit_line(raw, logf)
+            if pending:
+                self._emit_line(pending, logf)
         finally:
             if logf:
                 logf.close()
+
+    def _emit_line(self, raw: bytes, logf) -> None:
+        line = raw.decode(errors="replace").rstrip("\r\n")
+        # tqdm-style progress bars use \r; keep only the latest segment.
+        if "\r" in line:
+            line = line.split("\r")[-1]
+        self.tail.append(line)
+        if logf:
+            logf.write(line + "\n")
+        if self.on_line:
+            try:
+                self.on_line(line)
+            except Exception:
+                pass
 
     @property
     def running(self) -> bool:

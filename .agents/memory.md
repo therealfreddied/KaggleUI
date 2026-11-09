@@ -114,3 +114,20 @@ failure modes already paid for.
 - Remote layout is intentionally non-standard (upstream stays named `origin`, fork stays `self`).
   Fetch upstream with `git fetch origin`; push with `git push` or `git push self`.
 - Publishing the wheel is still manual: `dist/` is gitignored, `uv build --wheel` leaves a local file.
+
+## 2026-11-09 — bug-hunt lessons (durable)
+
+- NEVER `readline()` / line-iterate an asyncio subprocess stream: one line over the 64 KiB stream
+  limit raises `LimitOverrunError`, which killed `ManagedProcess._pump` silently (later output lost,
+  child deadlocked once the pipe filled). Fixed with chunked `read(1 << 16)` + manual `\n` split in
+  `proc.py`; same fix in `HFProvider._run` (one-line JSON results can exceed the limit). Sync
+  `for line in proc.stdout` (PIPE text mode) and file `readline()` are unaffected.
+- GitHub contents API: default JSON accept returns a base64 metadata envelope; downloads need
+  `Accept: application/vnd.github.raw+json`.
+- `ArtifactRegistry._entries` must distinguish missing vs corrupt `index.json`: returning `[]` for
+  corrupt made the next `add()` rewrite the index with one entry and orphan every artifact. It now
+  rebuilds from on-disk `*/*/manifest.json` (skipping `.staging-*` leftovers).
+- `vite build` wipes `kaggleui/static/` including the tracked `.gitkeep` — restore it after builds.
+- Release flow verified end-to-end on this host: bump 3 version files → `pnpm exec vite build` →
+  full pytest → mock selftest → `TMPDIR=$HOME/.cache/kui-tmp uv build --wheel` →
+  `git push --follow-tags` (targets `self`) → `gh release create vX.Y.Z dist/*.whl`.
